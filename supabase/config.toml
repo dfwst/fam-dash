@@ -1,0 +1,7 @@
+# Per-function settings (used by the Supabase CLI; mirrors how they're deployed).
+project_id = "obubqqolwnglbafaqdbp"
+
+# Google redirects here directly — no Supabase login on that request.
+# The one-time OAuth `state` authenticates it instead.
+[functions.google-oauth-callback]
+verify_jwt = false

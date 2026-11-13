@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import TabPage from './TabPage';
+import Settings from './Settings';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 
@@ -26,8 +27,11 @@ export default function Shell() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand">rlyfe</span>
-        <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        <NavLink to="/" className="brand">rlyfe</NavLink>
+        <div className="topbar-actions">
+          <NavLink to="/settings" className="link">Settings</NavLink>
+          <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        </div>
       </header>
 
       {tabs.length > 0 && (
@@ -48,6 +52,7 @@ export default function Shell() {
           <Routes>
             <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
+            <Route path="/settings" element={<Settings />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}
