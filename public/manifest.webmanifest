@@ -1,6 +1,6 @@
 {
-  "name": "Home Base",
-  "short_name": "Home Base",
+  "name": "rlyfe",
+  "short_name": "rlyfe",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#f6f4ef",

@@ -26,7 +26,7 @@ export default function Shell() {
   return (
     <div className="shell">
       <header className="topbar">
-        <span className="brand">Home Base</span>
+        <span className="brand">rlyfe</span>
         <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
       </header>
 

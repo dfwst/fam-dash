@@ -20,7 +20,7 @@ export default function SignIn() {
   return (
     <main className="card-page">
       <form className="card" onSubmit={submit}>
-        <h1>Home Base</h1>
+        <h1>rlyfe</h1>
         <label>
           Email
           <input type="email" autoComplete="username" value={email}

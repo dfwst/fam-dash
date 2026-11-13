@@ -1,4 +1,4 @@
-# Home Base — Family Life Dashboard
+# rlyfe — our life, one calm page
 
 One calm page for Jason and Blake: who needs a reply, what's due, what's coming.
 
