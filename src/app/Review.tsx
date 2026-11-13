@@ -7,7 +7,7 @@ import { gmailLink, loadAccounts, type Account } from '../lib/accounts';
 // archived, what it cost, and correct anything that's wrong. Nothing here changes mail.
 
 type Thread = {
-  account_id: string; thread_id: string; subject: string | null; from_name: string | null;
+  account_id: string; thread_id: string; subject: string | null; from_name: string | null; from_email: string | null;
   summary: string | null; reason: string | null; bucket: 1 | 2 | 3 | null; priority: boolean;
   category: string | null; classified_by: string | null; user_bucket: 1 | 2 | 3 | null;
   last_message_at: string | null; last_from_me: boolean | null; group_key: string | null;
@@ -16,6 +16,7 @@ type Run = {
   id: string; account_id: string; trigger: string; status: string;
   started_at: string; finished_at: string | null; stats: Record<string, number>; error: string | null;
 };
+type Pref = { sender_email: string; bucket: 1 | 2 | 3; votes_1: number; votes_2: number; votes_3: number };
 type Filter = 'all' | 3 | 2 | 1 | 'priority' | 'corrected';
 
 const BUCKET_LABEL = { 1: 'Junk', 2: 'Glance', 3: 'Real' } as const;
@@ -36,23 +37,28 @@ export default function Review() {
   const [runs, setRuns] = useState<Run[]>([]);
   const [monthCost, setMonthCost] = useState(0);
   const [filter, setFilter] = useState<Filter>(3);
+  const [prefs, setPrefs] = useState<Pref[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
+  const [learnedMsg, setLearnedMsg] = useState('');
 
   const byId = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
 
   const load = useCallback(async () => {
     const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-    const [t, r, u] = await Promise.all([
+    const [t, r, u, p] = await Promise.all([
       supabase.from('email_threads')
-        .select('account_id, thread_id, subject, from_name, summary, reason, bucket, priority, category, classified_by, user_bucket, last_message_at, last_from_me, group_key')
+        .select('account_id, thread_id, subject, from_name, from_email, summary, reason, bucket, priority, category, classified_by, user_bucket, last_message_at, last_from_me, group_key')
         .eq('in_inbox', true).eq('status', 'classified')
         .order('last_message_at', { ascending: false }).limit(1000),
       supabase.from('sync_runs').select('*').order('started_at', { ascending: false }).limit(10),
       supabase.from('ai_usage').select('cost_usd').gte('created_at', monthStart.toISOString()).limit(10000),
+      supabase.from('sender_prefs').select('sender_email, bucket, votes_1, votes_2, votes_3')
+        .not('bucket', 'is', null).order('updated_at', { ascending: false }),
     ]);
     if (t.error) setError(t.error.message);
     setThreads((t.data ?? []) as Thread[]);
+    setPrefs((p.data ?? []) as Pref[]);
     setRuns((r.data ?? []) as Run[]);
     setMonthCost((u.data ?? []).reduce((s, x) => s + Number(x.cost_usd), 0));
   }, []);
@@ -78,12 +84,33 @@ export default function Review() {
     setSyncing(false);
   }
 
+  // A correction also teaches rlyfe about the sender (database trigger) and
+  // re-sorts that sender's other inbox threads right away.
   async function correct(t: Thread, b: 1 | 2 | 3) {
     const next = t.user_bucket === b ? null : b; // tap again to clear
     setThreads(ts => ts?.map(x => (x === t ? { ...x, user_bucket: next } : x)) ?? null);
     const { error } = await supabase.from('email_threads').update({ user_bucket: next })
       .eq('account_id', t.account_id).eq('thread_id', t.thread_id);
-    if (error) setError(error.message);
+    if (error) return setError(error.message);
+
+    const before = (threads ?? []).filter(x => x.from_email === t.from_email && x !== t && x.bucket === next).length;
+    await load();
+    if (next && t.from_email) {
+      const { data } = await supabase.from('email_threads').select('thread_id', { count: 'exact' })
+        .eq('from_email', t.from_email).eq('in_inbox', true).eq('bucket', next).neq('thread_id', t.thread_id);
+      const moved = Math.max(0, (data?.length ?? 0) - before);
+      setLearnedMsg(`Got it — mail from ${t.from_name ?? t.from_email} will be sorted as ${BUCKET_LABEL[next]}`
+        + (moved ? `. ${moved} other thread${moved > 1 ? 's' : ''} updated.` : '.'));
+    } else {
+      setLearnedMsg('');
+    }
+  }
+
+  async function forget(p: Pref) {
+    if (!confirm(`Stop sorting ${p.sender_email} as ${BUCKET_LABEL[p.bucket]}? Its mail gets re-sorted on the next sync.`)) return;
+    const { error } = await supabase.from('sender_prefs').delete().eq('sender_email', p.sender_email);
+    if (error) return setError(error.message);
+    setPrefs(ps => ps.filter(x => x !== p));
   }
 
   const counts = useMemo(() => {
@@ -121,6 +148,7 @@ export default function Review() {
           Shadow mode: nothing in your mail changes yet. {counts.archive} of {counts.all} inbox threads would be archived.
         </p>
         {error && <p className="error">{error}</p>}
+        {learnedMsg && <p className="notice" onClick={() => setLearnedMsg('')}>{learnedMsg}</p>}
 
         <ul className="list">
           {latest.map(({ a, r }) => (
@@ -169,7 +197,7 @@ export default function Review() {
                       <div className="ellipsis">{t.subject}</div>
                       {t.summary && <div className="small">{t.summary}</div>}
                       <div className="muted small">
-                        {t.classified_by === 'rule' ? 'Rule' : t.classified_by === 'ai' ? 'AI' : 'Fallback'}: {t.reason}
+                        {{ rule: 'Rule', ai: 'AI', learned: 'Learned', fallback: 'Fallback' }[t.classified_by ?? 'fallback'] ?? 'Sorted'}: {t.reason}
                         {t.last_from_me ? ' · you replied last' : ''}
                         {acct ? ` · ${acct.email.split('@')[0]}` : ''}
                         {wouldArchive(t, acct) ? ' · would archive' : ''}
@@ -190,6 +218,27 @@ export default function Review() {
               })}
             </ul>
           )}
+      </div>
+
+      <div className="stack">
+        <h3>What rlyfe has learned</h3>
+        {prefs.length === 0 ? (
+          <p className="muted small">Nothing yet. Tap Real / Glance / Junk on any thread and rlyfe remembers that sender.</p>
+        ) : (
+          <ul className="list">
+            {prefs.map(p => (
+              <li key={p.sender_email} className="row">
+                <div className="row-main">
+                  <div className="ellipsis">{p.sender_email}</div>
+                  <div className="muted small">
+                    Always {BUCKET_LABEL[p.bucket]} · from {p.votes_1 + p.votes_2 + p.votes_3} correction{p.votes_1 + p.votes_2 + p.votes_3 > 1 ? 's' : ''}
+                  </div>
+                </div>
+                <button className="link" onClick={() => forget(p)}>Forget</button>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </section>
   );

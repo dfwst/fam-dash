@@ -6,7 +6,9 @@
 // 1. discover  (first invocation only)
 //    List INBOX threads from the last 30 days — each comes with a historyId (its version).
 //    New or changed version → mark 'pending'. Threads no longer listed → in_inbox = false.
-// 2. sort      Work through 'pending' threads ~110s at a time: rules first, Claude if needed.
+// 2. sort      Work through 'pending' threads ~110s at a time:
+//              learned sender preference → free rules → Claude (with your corrections as examples)
+//              → safety net (priority mail always bucket 3).
 // 3. chain     More left? Call ourselves again with chain+1 (keeps each call under the time limit).
 // 4. finalize  Record counts + cost on the run.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
@@ -16,13 +18,13 @@ import { gmail } from '../_shared/google.ts';
 import { accessTokenFor, NeedsReconnect } from '../_shared/accounts.ts';
 import { threadFacts, type GmailThread } from '../_shared/gmail-parse.ts';
 import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
-import { classifyWithClaude } from '../_shared/classify.ts';
+import { classifyWithClaude, type Correction } from '../_shared/classify.ts';
 
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SELF = `${SB_URL}/functions/v1/sync-account`;
 const WINDOW = 'newer_than:30d';
 const BUDGET_MS = 110_000;
-const CONCURRENCY = 5;
+const CONCURRENCY = 3; // Gmail's per-mailbox rate limit; gmail() also backs off if we hit it
 const MAX_CHAIN = 40;
 const MAX_ATTEMPTS = 3;
 
@@ -128,6 +130,22 @@ async function sortPending(
   const bump = (k: string, n = 1) => { stats[k] = (stats[k] ?? 0) + n; };
   const failed = new Set<string>(); // failed this invocation → retried by the next one, not now
 
+  // What you've taught it: sender → bucket, plus recent corrections to show Claude
+  const { data: prefRows } = await admin.from('sender_prefs')
+    .select('sender_email, bucket').eq('household_id', acct.household_id).not('bucket', 'is', null);
+  const learned = new Map<string, 1 | 2 | 3>((prefRows ?? []).map(p => [p.sender_email, p.bucket]));
+  const { data: corrRows } = await admin.from('email_threads')
+    .select('subject, from_name, from_email, bucket, user_bucket')
+    .eq('household_id', acct.household_id).not('user_bucket', 'is', null)
+    .order('updated_at', { ascending: false }).limit(200);
+  const corrections = (corrRows ?? []) as Correction[];
+  const examplesFor = (fromEmail: string) => {
+    const domain = '@' + (fromEmail.split('@')[1] ?? '');
+    const same = corrections.filter(c => c.from_email?.endsWith(domain));
+    const rest = corrections.filter(c => !c.from_email?.endsWith(domain));
+    return [...same.slice(0, 5), ...rest].slice(0, 8);
+  };
+
   while (Date.now() - started < BUDGET_MS) {
     let q = admin.from('email_threads')
       .select('thread_id, last_message_id, bucket, attempts')
@@ -158,13 +176,23 @@ async function sortPending(
           return;
         }
 
-        let sort: Sort | null = applyRules(f);
+        // Your sender preference wins over rules and Claude (but not over the safety net,
+        // and not for conversations you're part of)
+        const pref = f.lastFromMe ? undefined : learned.get(f.fromEmail);
+        const prefReason = pref ? `You sort this sender as ${['', 'Junk', 'Glance', 'Real'][pref]}` : '';
+
+        let sort: Sort | null = pref === 1 || pref === 2
+          ? { bucket: pref, priority: false, category: 'learned', group_key: null, by: 'learned',
+              summary: f.snippet.slice(0, 140), reason: prefReason }
+          : pref ? null : applyRules(f);
+
         if (sort) {
-          bump('by_rule');
+          bump(sort.by === 'learned' ? 'by_learned' : 'by_rule');
         } else {
-          const ai = await classifyWithClaude(f, acct);
-          sort = ai.sort;
-          bump(sort.by === 'ai' ? 'by_ai' : 'fallback');
+          // Learned "Real" still goes to Claude — for the 2–3 line summary
+          const ai = await classifyWithClaude(f, acct, examplesFor(f.fromEmail));
+          sort = pref === 3 ? { ...ai.sort, bucket: 3, by: 'learned', reason: prefReason } : ai.sort;
+          bump(sort.by === 'ai' ? 'by_ai' : sort.by === 'learned' ? 'by_learned' : 'fallback');
           await admin.from('ai_usage').insert({
             household_id: acct.household_id, run_id: runId, account_id: acct.id, thread_id: row.thread_id,
             purpose: 'classify', model: sort.model ?? 'unknown',

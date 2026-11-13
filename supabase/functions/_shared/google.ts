@@ -50,13 +50,26 @@ export class GoogleError extends Error {
   constructor(public code: string, public status: number) { super(code); }
 }
 
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
 // Thin Gmail GET wrapper: gmail('threads', token, { labelIds: 'INBOX' })
+// Gmail limits each mailbox to a burst rate; when it says "slow down" (429, or 403
+// with a rate/quota reason) we wait 1s, 2s, 4s, 8s, 16s (+ jitter) and try again.
 export async function gmail<T = any>(path: string, accessToken: string, query: Record<string, string | string[]> = {}): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) for (const x of [v].flat()) qs.append(k, x);
-  const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}?${qs}`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  if (!res.ok) throw new GoogleError(`gmail-${res.status}`, res.status);
-  return res.json();
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}?${qs}`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) return res.json();
+    const body = await res.json().catch(() => ({}));
+    const reason: string = body?.error?.errors?.[0]?.reason ?? body?.error?.status ?? '';
+    const slowDown = res.status === 429 || (res.status === 403 && /rate|quota|limit/i.test(reason));
+    if (slowDown && attempt < 5) {
+      await sleep(1000 * 2 ** attempt + Math.random() * 500);
+      continue;
+    }
+    throw new GoogleError(`gmail-${res.status}${reason ? `:${reason}` : ''}`, res.status);
+  }
 }

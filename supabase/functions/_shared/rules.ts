@@ -13,13 +13,23 @@ export type Sort = {
   summary: string;
   reason: string;
   group_key: string | null;
-  by: 'rule' | 'ai' | 'fallback';
+  by: 'rule' | 'ai' | 'fallback' | 'learned';
   model?: string;
 };
 
-// Always priority, never archived: declined payments, security, Resi (church livestream)
-export const PRIORITY_RX =
-  /(declin|payment (failed|failure|unsuccessful)|unable to process (your )?payment|security alert|suspicious|unusual (sign|activity)|new sign-?in|password (was )?(changed|reset)|\bresi\b|facebook access|access (is )?expir)/i;
+// Always priority, never archived: declined payments, security, Resi (church livestream).
+// Matched against subject + sender only (not preview text — "Bitcoin declined 6%" isn't a declined card).
+export const PRIORITY_RX = new RegExp([
+  '(payment|card|transaction|charge|autopay)[^\\n]{0,40}(declin|fail|unsuccessful|could not be processed)',
+  '(declin|fail)[^\\n]{0,20}(payment|card|transaction|charge)',
+  'unable to process (your )?payment',
+  'security alert', 'suspicious', 'unusual (sign|activity)', '(new|unrecognized) sign-?in', 'sign-?in attempt',
+  'password (was )?(changed|reset)',
+  '\\bresi\\b', 'facebook access', 'access (is )?expir',
+].join('|'), 'i');
+
+// One-time login codes are useless minutes later — never a to-do
+const OTP_RX = /(\b\d{4,8} is your (verification |security |login )?code|your (verification|security|login|one-time|sign-in) code|verification code)/i;
 
 // Words that mean "a person or a bill might be behind this" — never junk these by rule
 const CAREFUL_RX =
@@ -39,6 +49,9 @@ export function applyRules(f: ThreadFacts): Sort | null {
 
   if (PRIORITY_RX.test(subjectFrom)) return null;       // must-see: let Claude summarize it
   if (f.lastFromMe) return null;                         // a conversation you're part of
+
+  if (OTP_RX.test(f.subject))
+    return rule(1, 'security_code', 'One-time code — expires in minutes', f);
 
   if (PORTAL_RX.test(f.fromEmail))
     return rule(1, 'ops_app', 'Portal.io mail — your ops app reads it', f);
@@ -61,7 +74,7 @@ export function applyRules(f: ThreadFacts): Sort | null {
 }
 
 export function safetyCheck(f: ThreadFacts, s: Sort): Sort {
-  if (PRIORITY_RX.test(`${f.subject} ${f.fromEmail}`) || PRIORITY_RX.test(f.snippet)) {
+  if (PRIORITY_RX.test(`${f.subject} ${f.fromEmail}`)) {
     return { ...s, bucket: 3, priority: true };
   }
   return s;
