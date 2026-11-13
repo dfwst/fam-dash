@@ -105,3 +105,18 @@ a.row:hover { background: var(--accent-soft); }
 .pill.warn { background: #f6e7c8; color: #7a5410; cursor: pointer; }
 @media (prefers-color-scheme: dark) { .pill.warn { background: #3a3020; color: #f0d29a; } }
 .notice { margin: 0; padding: 10px 14px; border-radius: 10px; background: var(--accent-soft); cursor: pointer; }
+
+/* ── Review (Milestone 2) ── */
+.chips { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.chip { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 999px; padding: 6px 12px; min-height: 36px; white-space: nowrap; }
+.chip.active { background: var(--accent-soft); border-color: transparent; font-weight: 600; }
+.review-row { align-items: flex-start; }
+.review-row a.row-title { color: inherit; text-decoration: none; min-width: 0; }
+.flag { font-size: .72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: #f6e7c8; color: #7a5410; white-space: nowrap; }
+@media (prefers-color-scheme: dark) { .flag { background: #3a3020; color: #f0d29a; } }
+.bucket-pick { display: grid; gap: 4px; flex-shrink: 0; }
+.bp { font-size: .75rem; padding: 4px 8px; min-width: 58px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
+.bp.is-sorted { border-color: var(--accent); color: var(--text); font-weight: 600; }
+.bp.is-yours { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .bp.is-yours { color: #10251c; } }
+@media (max-width: 480px) { .topbar-actions a.link, .topbar-actions button.link { padding: 8px 4px; font-size: .9rem; } }

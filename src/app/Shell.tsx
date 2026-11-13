@@ -3,6 +3,7 @@ import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import TabPage from './TabPage';
 import Settings from './Settings';
+import Review from './Review';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 
@@ -29,6 +30,7 @@ export default function Shell() {
       <header className="topbar">
         <NavLink to="/" className="brand">rlyfe</NavLink>
         <div className="topbar-actions">
+          <NavLink to="/review" className="link">Review</NavLink>
           <NavLink to="/settings" className="link">Settings</NavLink>
           <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
@@ -53,6 +55,7 @@ export default function Shell() {
             <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
             <Route path="/settings" element={<Settings />} />
+            <Route path="/review" element={<Review />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}
