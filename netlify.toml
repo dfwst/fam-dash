@@ -5,6 +5,15 @@
 [build.environment]
   NODE_VERSION = "22"
 
+# Google OAuth callback: proxied (status 200, not a redirect) to the Supabase
+# function so Google and the browser only ever see rlyfe.app. Must stay ABOVE
+# the catch-all below — Netlify uses the first rule that matches.
+[[redirects]]
+  from = "/oauth/google/callback"
+  to = "https://obubqqolwnglbafaqdbp.supabase.co/functions/v1/google-oauth-callback"
+  status = 200
+  force = true
+
 # Single-page app: every path loads index.html, React Router takes it from there
 [[redirects]]
   from = "/*"

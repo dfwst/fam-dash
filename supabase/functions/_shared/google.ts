@@ -1,6 +1,5 @@
 // Google OAuth + Gmail API helpers.
 // Secrets: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET (Edge Function secrets).
-import { SB_URL } from './auth.ts';
 
 export const SCOPES = [
   'https://www.googleapis.com/auth/gmail.modify',         // read, archive, mark read, drafts, send
@@ -9,7 +8,9 @@ export const SCOPES = [
 
 const CLIENT_ID = Deno.env.get('GOOGLE_CLIENT_ID') ?? '';
 const CLIENT_SECRET = Deno.env.get('GOOGLE_CLIENT_SECRET') ?? '';
-export const REDIRECT_URI = `${SB_URL}/functions/v1/google-oauth-callback`;
+// Netlify proxies this to the google-oauth-callback function (see netlify.toml),
+// so the Supabase project address never appears on Google's screens.
+export const REDIRECT_URI = 'https://rlyfe.app/oauth/google/callback';
 
 export function authUrl(state: string, loginHint?: string): string {
   const p = new URLSearchParams({
