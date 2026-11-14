@@ -20,10 +20,15 @@ export type TodoThread = {
   last_from_me: boolean | null;
   unread: boolean | null;
   in_inbox: boolean;
+  snoozed_until: string | null;
 };
 
 const COLS = 'account_id, thread_id, subject, from_name, from_email, summary, snippet, bucket, user_bucket, '
-  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox';
+  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until';
+
+// Snoozed and the time has come → back at the top of the list
+export const isResurfaced = (t: TodoThread) => !!t.snoozed_until && Date.parse(t.snoozed_until) <= Date.now();
+export const isSnoozed = (t: TodoThread) => !!t.snoozed_until && Date.parse(t.snoozed_until) > Date.now();
 
 export const effectiveBucket = (t: TodoThread) => t.user_bucket ?? t.bucket;
 
@@ -68,23 +73,23 @@ function groupLabel(key: string, n: number) {
 }
 
 /**
- * Order: urgent (money/security) → other priority → newest first.
+ * Order: urgent (money/security) → back from Remind me → other priority → newest first.
  * Threads sharing a group_key collapse into one line, placed where its
  * most important member would sit. Priority threads never hide inside a group.
  */
 export function toLines(threads: TodoThread[]): Line[] {
-  const rank = (t: TodoThread) => (isUrgent(t) ? 0 : t.priority ? 1 : 2);
+  const rank = (t: TodoThread) => (isUrgent(t) ? 0 : isResurfaced(t) ? 1 : t.priority ? 2 : 3);
   const sorted = [...threads].sort((a, b) => rank(a) - rank(b) || time(b) - time(a));
 
   const groups = new Map<string, TodoThread[]>();
   for (const t of sorted) {
-    if (t.group_key && !t.priority) groups.set(t.group_key, [...(groups.get(t.group_key) ?? []), t]);
+    if (t.group_key && !t.priority && !isResurfaced(t)) groups.set(t.group_key, [...(groups.get(t.group_key) ?? []), t]);
   }
 
   const lines: Line[] = [];
   const placed = new Set<string>();
   for (const t of sorted) {
-    const g = t.group_key && !t.priority ? groups.get(t.group_key)! : null;
+    const g = t.group_key && !t.priority && !isResurfaced(t) ? groups.get(t.group_key)! : null;
     if (g && g.length > 1) {
       if (placed.has(t.group_key!)) continue;
       placed.add(t.group_key!);
@@ -98,9 +103,12 @@ export function toLines(threads: TodoThread[]): Line[] {
 
 export function splitTodos(inbox: TodoThread[]) {
   const real = inbox.filter(t => effectiveBucket(t) === 3);
+  const awake = real.filter(t => !isSnoozed(t));
   return {
-    todo: real.filter(t => !t.last_from_me),     // someone is waiting on YOU
-    waiting: real.filter(t => t.last_from_me),   // you replied last — waiting on them
+    todo: awake.filter(t => !t.last_from_me),    // someone is waiting on YOU
+    waiting: awake.filter(t => t.last_from_me),  // you replied last — waiting on them
+    snoozed: real.filter(isSnoozed)               // Remind me — hidden until their time
+      .sort((a, b) => Date.parse(a.snoozed_until!) - Date.parse(b.snoozed_until!)),
   };
 }
 

@@ -53,16 +53,31 @@ export class GoogleError extends Error {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // Thin Gmail GET wrapper: gmail('threads', token, { labelIds: 'INBOX' })
+export const gmail = <T = any>(path: string, accessToken: string, query: Record<string, string | string[]> = {}) =>
+  gmailRequest<T>('GET', path, accessToken, { query });
+
+// Writes. Archive = remove the INBOX label; rlyfe never deletes or trashes mail.
+export const modifyThread = (threadId: string, accessToken: string, change: { addLabelIds?: string[]; removeLabelIds?: string[] }) =>
+  gmailRequest('POST', `threads/${threadId}/modify`, accessToken, { body: change });
+
 // Gmail limits each mailbox to a burst rate; when it says "slow down" (429, or 403
 // with a rate/quota reason) we wait 1s, 2s, 4s, 8s, 16s (+ jitter) and try again.
-export async function gmail<T = any>(path: string, accessToken: string, query: Record<string, string | string[]> = {}): Promise<T> {
+export async function gmailRequest<T = any>(
+  method: 'GET' | 'POST' | 'DELETE', path: string, accessToken: string,
+  opts: { query?: Record<string, string | string[]>; body?: unknown } = {},
+): Promise<T> {
   const qs = new URLSearchParams();
-  for (const [k, v] of Object.entries(query)) for (const x of [v].flat()) qs.append(k, x);
+  for (const [k, v] of Object.entries(opts.query ?? {})) for (const x of [v].flat()) qs.append(k, x);
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}?${qs}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+    const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/${path}${qs.size ? `?${qs}` : ''}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+      },
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
-    if (res.ok) return res.json();
+    if (res.ok) return res.status === 204 ? (undefined as T) : res.json();
     const body = await res.json().catch(() => ({}));
     const reason: string = body?.error?.errors?.[0]?.reason ?? body?.error?.status ?? '';
     const slowDown = res.status === 429 || (res.status === 403 && /rate|quota|limit/i.test(reason));

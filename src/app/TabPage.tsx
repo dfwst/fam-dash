@@ -1,15 +1,28 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Tab } from './Shell';
 import { accountLabel, gmailLink, loadAccounts, type Account } from '../lib/accounts';
 import { ago, loadTabThreads, splitTodos, toLines, type TodoThread } from '../lib/todos';
-import TodoRow from './todo/TodoRow';
+import * as act from '../lib/actions';
+import TodoRow, { type RowAction } from './todo/TodoRow';
 
 // One tab's calm view:
 //   - To-do: Real mail someone is waiting on you for. Top 5 lines, the rest behind "N more".
 //   - Worth a glance: one line each, last 7 days.
-//   - Waiting on others: threads where you replied last (collapsed).
-// Read-only in M3: tapping a line opens it in Gmail. Done / Ignore / Remind arrive in M4.
+//   - Waiting on others / Snoozed: collapsed.
+// Done / Ignore archive the email in Gmail (+ mark read); Remind me hides it in rlyfe only.
+// Every action shows an Undo.
 const TOP = 5;
+
+type Toast = {
+  text: string;
+  logIds: number[];
+  kind: string;
+  at: number;
+  offer?: { sender: string; name: string };
+  error?: boolean;
+};
+
+const key = (t: Pick<TodoThread, 'account_id' | 'thread_id'>) => t.account_id + t.thread_id;
 
 export default function TabPage({ tab }: { tab: Tab }) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
@@ -19,6 +32,9 @@ export default function TabPage({ tab }: { tab: Tab }) {
   const [showAll, setShowAll] = useState(false);
   const [showGlance, setShowGlance] = useState(false);
   const [showWaiting, setShowWaiting] = useState(false);
+  const [showSnoozed, setShowSnoozed] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimer = useRef<number | undefined>(undefined);
 
   const load = useCallback(async () => {
     try {
@@ -41,9 +57,100 @@ export default function TabPage({ tab }: { tab: Tab }) {
     return () => document.removeEventListener('visibilitychange', onFocus);
   }, [load]);
 
+  const show = (t: Toast) => {
+    setToast(t);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), t.offer ? 12000 : 7000);
+  };
+
+  // Remove from the list right away; put it back if Gmail says no
+  const optimistic = (t: TodoThread, change: Partial<TodoThread> | 'remove') =>
+    setInbox(list => (list ?? []).flatMap(x =>
+      key(x) !== key(t) ? [x] : change === 'remove' ? [] : [{ ...x, ...change }]));
+
+  async function onAction(a: RowAction) {
+    const t = a.thread;
+    const who = t.from_name || t.from_email || 'that';
+    try {
+      if (a.kind === 'snooze') {
+        optimistic(t, { snoozed_until: a.until.toISOString() });
+        const r = await act.snooze(t, a.until);
+        show({ text: `Hidden until ${act.whenLabel(a.until.toISOString())}`, logIds: [r.logId], kind: 'snooze', at: Date.now() });
+        return;
+      }
+      optimistic(t, 'remove');
+      if (a.kind === 'done') {
+        const r = await act.done(t);
+        // "Done all" on a group fires several in a row — fold them into one toast
+        setToast(prev => {
+          const merge = prev && prev.kind === 'done' && Date.now() - prev.at < 2500;
+          const logIds = merge ? [...prev.logIds, r.logId] : [r.logId];
+          const next = { text: logIds.length > 1 ? `Done · ${logIds.length} archived` : 'Done · archived', logIds, kind: 'done', at: Date.now() };
+          window.clearTimeout(toastTimer.current);
+          toastTimer.current = window.setTimeout(() => setToast(null), 7000);
+          return next;
+        });
+      } else {
+        const r = await act.ignore(t);
+        show({
+          text: r.offerAlwaysIgnore ? `Ignored. Always ignore emails from ${r.senderName || who}?` : 'Ignored · archived',
+          logIds: [r.logId], kind: 'ignore', at: Date.now(),
+          offer: r.offerAlwaysIgnore && r.sender ? { sender: r.sender, name: r.senderName || r.sender } : undefined,
+        });
+      }
+    } catch (e) {
+      load(); // put the real state back
+      const msg = e instanceof Error ? e.message : 'failed';
+      show({
+        text: msg === 'needs-reconnect' ? 'Google sign-in expired for that account — reconnect it in Settings.' : `Couldn't do that (${msg}).`,
+        logIds: [], kind: 'error', at: Date.now(), error: true,
+      });
+    }
+  }
+
+  async function undoToast() {
+    if (!toast) return;
+    const ids = toast.logIds;
+    setToast(null);
+    try {
+      for (const id of ids) await act.undo(id);
+    } catch {
+      show({ text: "Couldn't undo — check Gmail.", logIds: [], kind: 'error', at: Date.now(), error: true });
+    }
+    load();
+  }
+
+  async function confirmAlwaysIgnore() {
+    if (!toast?.offer) return;
+    const { sender, name } = toast.offer;
+    setToast(null);
+    try {
+      const r = await act.alwaysIgnore(sender);
+      show({
+        text: `Gmail will skip the inbox for ${name} from now on`
+          + (r.archived ? ` · ${r.archived} more archived` : '') + '. Undo it from Review → Activity.',
+        logIds: [], kind: 'filter', at: Date.now(),
+      });
+      load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'failed';
+      show({
+        text: msg === 'priority-sender'
+          ? `${name} has sent priority mail before, so rlyfe won't auto-ignore it.`
+          : `Couldn't create the filter (${msg}).`,
+        logIds: [], kind: 'error', at: Date.now(), error: true,
+      });
+    }
+  }
+
+  async function wake(t: TodoThread) {
+    optimistic(t, { snoozed_until: null });
+    await act.unsnooze(t).catch(() => load());
+  }
+
   const byId = useMemo(() => new Map((accounts ?? []).map(a => [a.id, a])), [accounts]);
   const showAccount = (accounts?.length ?? 0) > 1;
-  const { todo, waiting } = useMemo(() => splitTodos(inbox ?? []), [inbox]);
+  const { todo, waiting, snoozed } = useMemo(() => splitTodos(inbox ?? []), [inbox]);
   const lines = useMemo(() => toLines(todo), [todo]);
 
   if (error) return <p className="error">{error}</p>;
@@ -73,14 +180,12 @@ export default function TabPage({ tab }: { tab: Tab }) {
       ) : (
         <section className="stack">
           <ul className="todo-list">
-            {visible.map(l => <TodoRow key={l.key} line={l} accounts={byId} showAccount={showAccount} />)}
+            {visible.map(l => (
+              <TodoRow key={l.key} line={l} accounts={byId} showAccount={showAccount} onAction={onAction} />
+            ))}
           </ul>
-          {hidden > 0 && (
-            <button className="more" onClick={() => setShowAll(true)}>{hidden} more</button>
-          )}
-          {showAll && lines.length > TOP && (
-            <button className="more" onClick={() => setShowAll(false)}>Show less</button>
-          )}
+          {hidden > 0 && <button className="more" onClick={() => setShowAll(true)}>{hidden} more</button>}
+          {showAll && lines.length > TOP && <button className="more" onClick={() => setShowAll(false)}>Show less</button>}
         </section>
       )}
 
@@ -91,7 +196,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
             {glanceShown.map(t => {
               const acct = byId.get(t.account_id);
               return (
-                <li key={t.account_id + t.thread_id}>
+                <li key={key(t)}>
                   <a href={acct ? gmailLink(acct.email, t.thread_id) : undefined} target="_blank" rel="noreferrer">
                     <span className="glance-from">{t.from_name || t.from_email}</span>
                     <span className="glance-text">{t.summary || t.subject}</span>
@@ -119,7 +224,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
               {waiting.map(t => {
                 const acct = byId.get(t.account_id);
                 return (
-                  <li key={t.account_id + t.thread_id}>
+                  <li key={key(t)}>
                     <a href={acct ? gmailLink(acct.email, t.thread_id) : undefined} target="_blank" rel="noreferrer">
                       <span className="glance-from">{t.subject}</span>
                       <span className="glance-text">{t.summary}</span>
@@ -131,6 +236,35 @@ export default function TabPage({ tab }: { tab: Tab }) {
             </ul>
           )}
         </section>
+      )}
+
+      {snoozed.length > 0 && (
+        <section className="stack">
+          <button className="section-toggle" onClick={() => setShowSnoozed(s => !s)} aria-expanded={showSnoozed}>
+            Snoozed · {snoozed.length} {showSnoozed ? '▴' : '▾'}
+          </button>
+          {showSnoozed && (
+            <ul className="glance">
+              {snoozed.map(t => (
+                <li key={key(t)} className="snoozed-row">
+                  <span className="glance-from">{t.from_name || t.from_email}</span>
+                  <span className="glance-text">{t.subject}</span>
+                  <span className="todo-meta">{act.whenLabel(t.snoozed_until!)}</span>
+                  <button className="link" onClick={() => wake(t)}>Now</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {toast && (
+        <div className={toast.error ? 'toast error' : 'toast'} role="status">
+          <span>{toast.text}</span>
+          {toast.offer && <button onClick={confirmAlwaysIgnore}>Always ignore</button>}
+          {toast.logIds.length > 0 && <button onClick={undoToast}>Undo</button>}
+          <button className="x" aria-label="Dismiss" onClick={() => setToast(null)}>×</button>
+        </div>
       )}
     </div>
   );

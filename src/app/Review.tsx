@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { callFn } from '../lib/functions';
 import { gmailLink, loadAccounts, type Account } from '../lib/accounts';
+import Activity from './Activity';
 
 // Milestone 2 — shadow mode. See how every inbox thread was sorted, what WOULD be
 // archived, what it cost, and correct anything that's wrong. Nothing here changes mail.
@@ -28,8 +29,13 @@ const ago = (iso: string) => {
 
 // What the archive step will do once it's on (M4): bucket 1 everywhere,
 // bucket 2 too except on junk-only inboxes. Bucket 3 never.
-const wouldArchive = (t: Thread, a?: Account) =>
-  t.bucket === 1 || (t.bucket === 2 && a?.policy !== 'junk_only');
+// (Shadow preview: a read-only account is previewed as if it were on full cleanup.)
+const wouldArchive = (t: Thread, a?: Account) => {
+  const b = t.user_bucket ?? t.bucket;
+  return !t.priority && !t.last_from_me && (b === 1 || (b === 2 && a?.policy !== 'junk_only'));
+};
+// What the next sync will actually archive, given each account's real policy
+const willArchive = (t: Thread, a?: Account) => !!a && a.policy !== 'read_only' && wouldArchive(t, a);
 
 export default function Review() {
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -123,6 +129,7 @@ export default function Review() {
       priority: ts.filter(t => t.priority).length,
       corrected: ts.filter(t => t.user_bucket && t.user_bucket !== t.bucket).length,
       archive: ts.filter(t => wouldArchive(t, byId.get(t.account_id))).length,
+      willArchive: ts.filter(t => willArchive(t, byId.get(t.account_id))).length,
     };
   }, [threads, byId]);
 
@@ -144,9 +151,17 @@ export default function Review() {
             {running ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'}
           </button>
         </div>
-        <p className="notice">
-          Shadow mode: nothing in your mail changes yet. {counts.archive} of {counts.all} inbox threads would be archived.
-        </p>
+        {accounts.every(a => a.policy === 'read_only') ? (
+          <p className="notice">
+            Shadow mode: the morning sync doesn't change your mail. {counts.archive} of {counts.all} inbox threads would be archived.
+            Turn on cleanup per account in Settings.
+          </p>
+        ) : (
+          <p className="notice">
+            Cleanup is on for {accounts.filter(a => a.policy !== 'read_only').length} account(s).
+            The next sync will archive {counts.willArchive} threads still sitting in the inbox. Anything archived shows below under Activity.
+          </p>
+        )}
         {error && <p className="error">{error}</p>}
         {learnedMsg && <p className="notice" onClick={() => setLearnedMsg('')}>{learnedMsg}</p>}
 
@@ -219,6 +234,8 @@ export default function Review() {
             </ul>
           )}
       </div>
+
+      <Activity accounts={byId} />
 
       <div className="stack">
         <h3>What rlyfe has learned</h3>

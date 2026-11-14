@@ -1,7 +1,8 @@
 // Internal worker: sync + sort ONE account for ONE sync_run. Called by sync-run (and by itself).
 // Auth: Bearer <service role key> — never called from the browser.
 //
-// Shadow mode (Milestone 2): reads Gmail, writes rlyfe's tables. Never changes mail.
+// Changes mail ONLY in step 4, and only on accounts whose cleanup policy isn't read_only:
+//   junk_only → archive Junk;  full → archive Junk + Glance.  Real is never touched.
 //
 // 1. discover  (first invocation only)
 //    List INBOX threads from the last 30 days — each comes with a historyId (its version).
@@ -10,11 +11,12 @@
 //              learned sender preference → free rules → Claude (with your corrections as examples)
 //              → safety net (priority mail always bucket 3).
 // 3. chain     More left? Call ourselves again with chain+1 (keeps each call under the time limit).
-// 4. finalize  Record counts + cost on the run.
+// 4. archive   Clean up per the account's policy (archive + mark read, logged with undo).
+// 5. finalize  Record counts + cost on the run.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
 import { adminClient, SB_URL } from '../_shared/auth.ts';
 import { json } from '../_shared/http.ts';
-import { gmail } from '../_shared/google.ts';
+import { gmail, modifyThread } from '../_shared/google.ts';
 import { accessTokenFor, NeedsReconnect } from '../_shared/accounts.ts';
 import { threadFacts, type GmailThread } from '../_shared/gmail-parse.ts';
 import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
@@ -70,6 +72,7 @@ async function work(runId: string, chain: number) {
       return;
     }
 
+    await autoArchive(admin, acct, token, runId, stats);
     await finalize(admin, acct, runId, stats, remaining);
   } catch (e) {
     const msg = e instanceof NeedsReconnect ? 'needs-reconnect' : (e instanceof Error ? e.message : String(e));
@@ -237,7 +240,52 @@ async function save(admin: SupabaseClient, accountId: string, threadId: string, 
   if (error) throw error;
 }
 
-// ── 4. finalize ─────────────────────────────────────────────────────
+// ── 4. archive ──────────────────────────────────────────────────────
+
+const MAX_ARCHIVE_PER_RUN = 300;
+const BUCKET_NAME = ['', 'Junk', 'Glance', 'Real'];
+
+async function autoArchive(admin: SupabaseClient, acct: Acct, token: string, runId: string, stats: Stats) {
+  const allowed = acct.policy === 'full' ? [1, 2] : acct.policy === 'junk_only' ? [1] : [];
+  if (!allowed.length) return; // read_only: never touch mail
+
+  const rows = await selectAll<{
+    thread_id: string; bucket: number | null; user_bucket: number | null; priority: boolean;
+    last_from_me: boolean | null; unread: boolean | null; reason: string | null;
+    subject: string | null; from_name: string | null; from_email: string | null;
+  }>(admin, 'email_threads',
+    'thread_id, bucket, user_bucket, priority, last_from_me, unread, reason, subject, from_name, from_email',
+    q => q.eq('account_id', acct.id).eq('in_inbox', true).eq('status', 'classified'));
+
+  const targets = rows.filter(t => {
+    const b = t.user_bucket ?? t.bucket;
+    return b != null && allowed.includes(b)
+      && !t.priority             // safety net: priority mail is never auto-archived
+      && !t.last_from_me;        // nor a conversation you're in
+  }).slice(0, MAX_ARCHIVE_PER_RUN);
+
+  let archived = 0;
+  await pool(targets, CONCURRENCY, async (t) => {
+    try {
+      await modifyThread(t.thread_id, token, { removeLabelIds: ['INBOX', 'UNREAD'] });
+      const now = new Date().toISOString();
+      await save(admin, acct.id, t.thread_id, { in_inbox: false, acted: 'archived', acted_at: now, updated_at: now });
+      const b = t.user_bucket ?? t.bucket ?? 0;
+      await admin.from('action_log').insert({
+        household_id: acct.household_id, account_id: acct.id, thread_id: t.thread_id,
+        action: 'archive', source: 'sync', reason: `${BUCKET_NAME[b]}: ${t.reason ?? ''}`.slice(0, 200),
+        payload: { was_unread: !!t.unread, subject: t.subject, from_name: t.from_name, from_email: t.from_email, bucket: b, run_id: runId },
+      });
+      archived++;
+    } catch (e) {
+      console.error('auto-archive failed', t.thread_id, e instanceof Error ? e.message : e);
+      stats.archive_errors = (stats.archive_errors ?? 0) + 1;
+    }
+  });
+  stats.archived = (stats.archived ?? 0) + archived;
+}
+
+// ── 5. finalize ─────────────────────────────────────────────────────
 
 async function finalize(admin: SupabaseClient, acct: Acct, runId: string, stats: Stats, remaining: number) {
   const usage = await selectAll<{ cost_usd: number }>(admin, 'ai_usage', 'cost_usd', q => q.eq('run_id', runId));
