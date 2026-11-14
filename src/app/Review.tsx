@@ -4,8 +4,8 @@ import { callFn } from '../lib/functions';
 import { gmailLink, loadAccounts, type Account } from '../lib/accounts';
 import Activity from './Activity';
 
-// Milestone 2 — shadow mode. See how every inbox thread was sorted, what WOULD be
-// archived, what it cost, and correct anything that's wrong. Nothing here changes mail.
+// Review = training rlyfe's sorting. Work through "To check" by confirming or correcting
+// each thread; checked ones move under Real / Glance / Junk. Nothing here changes mail.
 
 type Thread = {
   account_id: string; thread_id: string; subject: string | null; from_name: string | null; from_email: string | null;
@@ -18,7 +18,13 @@ type Run = {
   started_at: string; finished_at: string | null; stats: Record<string, number>; error: string | null;
 };
 type Pref = { sender_email: string; bucket: 1 | 2 | 3; votes_1: number; votes_2: number; votes_3: number };
-type Filter = 'all' | 3 | 2 | 1 | 'priority' | 'corrected';
+type Filter = 'check' | 3 | 2 | 1;
+
+// The Review queue: every inbox thread starts "to check". Tapping Real / Glance / Junk
+// (confirm or correct) checks it — it slides out of the queue and lives under that tab.
+// Threads sorted by a sender you've already taught (classified_by 'learned') count as checked.
+const effective = (t: Thread) => (t.user_bucket ?? t.bucket) as 1 | 2 | 3 | null;
+const isChecked = (t: Thread) => t.user_bucket != null || t.classified_by === 'learned';
 
 const BUCKET_LABEL = { 1: 'Junk', 2: 'Glance', 3: 'Real' } as const;
 const money = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
@@ -42,7 +48,9 @@ export default function Review() {
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
   const [monthCost, setMonthCost] = useState(0);
-  const [filter, setFilter] = useState<Filter>(3);
+  const [filter, setFilter] = useState<Filter>('check');
+  const [leaving, setLeaving] = useState<Set<string>>(new Set());
+  const [checkedNow, setCheckedNow] = useState(0);
   const [prefs, setPrefs] = useState<Pref[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -90,23 +98,37 @@ export default function Review() {
     setSyncing(false);
   }
 
-  // A correction also teaches rlyfe about the sender (database trigger) and
-  // re-sorts that sender's other inbox threads right away.
-  async function correct(t: Thread, b: 1 | 2 | 3) {
-    const next = t.user_bucket === b ? null : b; // tap again to clear
-    setThreads(ts => ts?.map(x => (x === t ? { ...x, user_bucket: next } : x)) ?? null);
+  // Confirming or correcting checks the thread: it slides out of the current list and
+  // shows up under its tab. It also teaches rlyfe the sender (database trigger), which
+  // re-sorts — and checks — that sender's other inbox threads right away.
+  // In a Real/Glance/Junk tab, tapping the bucket it's already in un-checks it (back to the queue).
+  async function pick(t: Thread, b: 1 | 2 | 3) {
+    const k = t.account_id + t.thread_id;
+    const uncheck = filter !== 'check' && t.user_bucket === b;
+    const next = uncheck ? null : b;
+    const corrected = next != null && next !== t.bucket;
+
+    setLeaving(s => new Set(s).add(k));
     const { error } = await supabase.from('email_threads').update({ user_bucket: next })
       .eq('account_id', t.account_id).eq('thread_id', t.thread_id);
-    if (error) return setError(error.message);
+    if (error) {
+      setLeaving(s => { const n = new Set(s); n.delete(k); return n; });
+      return setError(error.message);
+    }
+    if (!uncheck && filter === 'check') setCheckedNow(n => n + 1);
 
-    const before = (threads ?? []).filter(x => x.from_email === t.from_email && x !== t && x.bucket === next).length;
+    // Let the slide-out play, then refresh (picks up other threads the learning moved)
+    const before = (threads ?? []).filter(x => x.from_email === t.from_email && x !== t && isChecked(x)).length;
+    await new Promise(r => setTimeout(r, 250));
     await load();
-    if (next && t.from_email) {
-      const { data } = await supabase.from('email_threads').select('thread_id', { count: 'exact' })
-        .eq('from_email', t.from_email).eq('in_inbox', true).eq('bucket', next).neq('thread_id', t.thread_id);
-      const moved = Math.max(0, (data?.length ?? 0) - before);
-      setLearnedMsg(`Got it — mail from ${t.from_name ?? t.from_email} will be sorted as ${BUCKET_LABEL[next]}`
-        + (moved ? `. ${moved} other thread${moved > 1 ? 's' : ''} updated.` : '.'));
+    setLeaving(s => { const n = new Set(s); n.delete(k); return n; });
+
+    if (corrected && t.from_email) {
+      const { count } = await supabase.from('email_threads').select('thread_id', { count: 'exact', head: true })
+        .eq('from_email', t.from_email).eq('in_inbox', true).eq('classified_by', 'learned');
+      const moved = Math.max(0, (count ?? 0) - before);
+      setLearnedMsg(`Got it — ${t.from_name ?? t.from_email} → ${BUCKET_LABEL[next!]} from now on`
+        + (moved ? `, and ${moved} more from them moved too.` : '.'));
     } else {
       setLearnedMsg('');
     }
@@ -121,23 +143,23 @@ export default function Review() {
 
   const counts = useMemo(() => {
     const ts = threads ?? [];
+    const checked = ts.filter(isChecked);
     return {
       all: ts.length,
-      3: ts.filter(t => t.bucket === 3).length,
-      2: ts.filter(t => t.bucket === 2).length,
-      1: ts.filter(t => t.bucket === 1).length,
-      priority: ts.filter(t => t.priority).length,
-      corrected: ts.filter(t => t.user_bucket && t.user_bucket !== t.bucket).length,
+      check: ts.length - checked.length,
+      3: checked.filter(t => effective(t) === 3).length,
+      2: checked.filter(t => effective(t) === 2).length,
+      1: checked.filter(t => effective(t) === 1).length,
       archive: ts.filter(t => wouldArchive(t, byId.get(t.account_id))).length,
       willArchive: ts.filter(t => willArchive(t, byId.get(t.account_id))).length,
     };
   }, [threads, byId]);
 
-  const shown = (threads ?? []).filter(t =>
-    filter === 'all' ? true
-    : filter === 'priority' ? t.priority
-    : filter === 'corrected' ? t.user_bucket && t.user_bucket !== t.bucket
-    : t.bucket === filter);
+  // Queue order: what the cleanup would archive first (Junk, then Glance), then Real — newest first within each
+  const shown = (threads ?? [])
+    .filter(t => (filter === 'check' ? !isChecked(t) : isChecked(t) && effective(t) === filter))
+    .sort((a, b) => (filter === 'check' ? (effective(a) ?? 3) - (effective(b) ?? 3) : 0)
+      || Date.parse(b.last_message_at ?? '0') - Date.parse(a.last_message_at ?? '0'));
 
   // Latest run per account
   const latest = accounts.map(a => ({ a, r: runs.find(r => r.account_id === a.id) }));
@@ -186,22 +208,37 @@ export default function Review() {
 
       <div className="stack">
         <div className="chips">
-          {([['Real', 3], ['Glance', 2], ['Junk', 1], ['Priority', 'priority'], ['Corrected', 'corrected'], ['All', 'all']] as const)
+          {([['To check', 'check'], ['Real', 3], ['Glance', 2], ['Junk', 1]] as const)
             .map(([label, f]) => (
-              <button key={label} className={filter === f ? 'chip active' : 'chip'} onClick={() => setFilter(f)}>
+              <button key={label} className={filter === f ? 'chip active' : 'chip'} onClick={() => { setFilter(f); setLearnedMsg(''); }}>
                 {label} <span className="muted">{counts[f]}</span>
               </button>
             ))}
         </div>
 
+        {filter === 'check' ? (
+          <p className="muted small">
+            {counts.check} left to check{checkedNow ? ` · ${checkedNow} checked just now` : ''}.
+            Tap the right bucket — the highlighted one is how rlyfe sorted it. Nothing here changes your mail.
+          </p>
+        ) : (
+          <p className="muted small">
+            Checked as {BUCKET_LABEL[filter]}. Tap {BUCKET_LABEL[filter]} again to send one back to “To check”, or another bucket to move it.
+          </p>
+        )}
+
         {!threads ? <p className="muted">Loading…</p>
-          : shown.length === 0 ? <p className="muted">Nothing here.</p>
-          : (
+          : shown.length === 0 ? (
+            filter === 'check'
+              ? <p className="notice">Nothing to check — rlyfe is sorting the way you would.</p>
+              : <p className="muted">Nothing checked as {BUCKET_LABEL[filter]} yet.</p>
+          ) : (
             <ul className="list">
               {shown.map(t => {
                 const acct = byId.get(t.account_id);
+                const k = t.account_id + t.thread_id;
                 return (
-                  <li key={t.account_id + t.thread_id} className="row review-row">
+                  <li key={k} className={leaving.has(k) ? 'row review-row leaving' : 'row review-row'}>
                     <div className="row-main">
                       <div className="row-top">
                         {t.priority && <span className="flag">Priority</span>}
@@ -219,14 +256,19 @@ export default function Review() {
                       </div>
                     </div>
                     <div className="bucket-pick" aria-label="Correct the bucket">
-                      {([3, 2, 1] as const).map(b => (
-                        <button key={b}
-                          className={['bp', t.bucket === b ? 'is-sorted' : '', t.user_bucket === b ? 'is-yours' : ''].join(' ')}
-                          title={t.bucket === b ? `Sorted as ${BUCKET_LABEL[b]}` : `Should be ${BUCKET_LABEL[b]}`}
-                          onClick={() => correct(t, b)}>
-                          {BUCKET_LABEL[b]}
-                        </button>
-                      ))}
+                      {([3, 2, 1] as const).map(b => {
+                        const mine = filter === 'check' ? t.bucket === b : effective(t) === b;
+                        return (
+                          <button key={b} disabled={leaving.has(k)}
+                            className={['bp', mine ? (filter === 'check' ? 'is-sorted' : 'is-yours') : ''].join(' ')}
+                            title={filter === 'check'
+                              ? (mine ? `Confirm ${BUCKET_LABEL[b]}` : `Change to ${BUCKET_LABEL[b]}`)
+                              : (mine ? 'Send back to To check' : `Move to ${BUCKET_LABEL[b]}`)}
+                            onClick={() => pick(t, b)}>
+                            {filter === 'check' && mine ? `✓ ${BUCKET_LABEL[b]}` : BUCKET_LABEL[b]}
+                          </button>
+                        );
+                      })}
                     </div>
                   </li>
                 );
