@@ -208,3 +208,30 @@ a.row-link:hover { text-decoration: underline; }
 .policy select { font: inherit; font-size: .9rem; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 36px; }
 .review-row { transition: opacity .22s ease, transform .22s ease; }
 .review-row.leaving { opacity: 0; transform: translateX(40px); }
+
+/* ── Phone fit ──
+   Grid columns size to their longest single-line text unless capped, which pushed
+   rows (e.g. "Worth a glance") far off a phone screen. Cap every grid column at the
+   container width and let flex/grid children shrink so ellipsis can do its job. */
+.stack, .stack-lg, .todo-list, .glance, .sublist, .todo, .todo-body, .row-main, .card, .remind, .caught-up {
+  grid-template-columns: minmax(0, 1fr);
+}
+.stack > *, .stack-lg > *, .todo-list > li, .glance > li, .sublist > li, .list > li, .row-main, .todo-body { min-width: 0; }
+html, body { overflow-x: hidden; }
+img, svg, video { max-width: 100%; }
+
+/* iPhone: Safari zooms the page when a field under 16px gets focus (and stays zoomed),
+   and can inflate text on rotate. Keep every form control at 16px and turn that off. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+input, select, textarea { font-size: 16px !important; }
+a, button { -webkit-tap-highlight-color: transparent; }
+
+/* Narrow phones: a little tighter so cards don't feel cramped */
+@media (max-width: 480px) {
+  .shell { padding-left: 12px; padding-right: 12px; }
+  .todo-body { padding: 12px 14px 6px; }
+  .actions { padding: 0 6px 6px; }
+  .actions button, .actions a.open { padding: 6px 8px; }
+  .tab { padding: 10px 8px; font-size: .95rem; }
+  .bp { min-width: 52px; }
+}
