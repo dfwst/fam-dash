@@ -235,3 +235,12 @@ a, button { -webkit-tap-highlight-color: transparent; }
   .tab { padding: 10px 8px; font-size: .95rem; }
   .bp { min-width: 52px; }
 }
+/* Review: company cards + nested rows + undo line */
+.group-card { background: var(--accent-soft); }
+.group-card .show-each { justify-self: start; padding: 4px 0; color: var(--accent); font-weight: 600; }
+.review-row.nested { padding-left: 26px; border-left: 3px solid var(--accent-soft); }
+.undo-line { display: flex; align-items: center; gap: 10px; cursor: default; }
+.undo-line span { flex: 1; min-width: 0; }
+.undo-line button { font-weight: 700; color: var(--accent); }
+/* Long unbreakable strings (URLs, addresses, codes) wrap instead of pushing past the screen */
+body { overflow-wrap: anywhere; }

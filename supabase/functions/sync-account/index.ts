@@ -137,6 +137,10 @@ async function sortPending(
   const { data: prefRows } = await admin.from('sender_prefs')
     .select('sender_email, bucket').eq('household_id', acct.household_id).not('bucket', 'is', null);
   const learned = new Map<string, 1 | 2 | 3>((prefRows ?? []).map(p => [p.sender_email, p.bucket]));
+  // Company-wide choices from the Review queue ("everything from linkedin.com is Junk")
+  const { data: domainRows } = await admin.from('domain_prefs')
+    .select('domain, bucket').eq('household_id', acct.household_id);
+  const domainPref = new Map<string, 1 | 2 | 3>((domainRows ?? []).map(d => [d.domain, d.bucket]));
   const { data: corrRows } = await admin.from('email_threads')
     .select('subject, from_name, from_email, bucket, user_bucket')
     .eq('household_id', acct.household_id).not('user_bucket', 'is', null)
@@ -181,8 +185,14 @@ async function sortPending(
 
         // Your sender preference wins over rules and Claude (but not over the safety net,
         // and not for conversations you're part of)
-        const pref = f.lastFromMe ? undefined : learned.get(f.fromEmail);
-        const prefReason = pref ? `You sort this sender as ${['', 'Junk', 'Glance', 'Real'][pref]}` : '';
+        // Exact sender first, then the sender's company (domain_prefs never holds gmail.com etc.)
+        const domain = f.fromEmail.split('@')[1] ?? '';
+        const senderPref = f.lastFromMe ? undefined : learned.get(f.fromEmail);
+        const companyPref = f.lastFromMe || senderPref ? undefined : domainPref.get(domain);
+        const pref = senderPref ?? companyPref;
+        const prefReason = !pref ? ''
+          : senderPref ? `You sort this sender as ${['', 'Junk', 'Glance', 'Real'][pref]}`
+          : `You sort ${domain} as ${['', 'Junk', 'Glance', 'Real'][pref]}`;
 
         let sort: Sort | null = pref === 1 || pref === 2
           ? { bucket: pref, priority: false, category: 'learned', group_key: null, by: 'learned',

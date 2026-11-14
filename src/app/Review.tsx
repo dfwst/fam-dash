@@ -25,6 +25,28 @@ type Filter = 'check' | 3 | 2 | 1;
 // Threads sorted by a sender you've already taught (classified_by 'learned') count as checked.
 const effective = (t: Thread) => (t.user_bucket ?? t.bucket) as 1 | 2 | 3 | null;
 const isChecked = (t: Thread) => t.user_bucket != null || t.classified_by === 'learned';
+// The queue is only what the morning cleanup could archive (Junk + Glance). Real is
+// already on your to-do list — a wrong one there costs nothing, you just Ignore it.
+const inQueue = (t: Thread) => !isChecked(t) && (effective(t) === 1 || effective(t) === 2);
+
+// Group the queue by company (email domain) so one tap can settle e.g. all of linkedin.com.
+// Personal mail domains group by exact address instead — one gmail.com friend ≠ another.
+const PERSONAL = new Set(['gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'outlook.com', 'hotmail.com',
+  'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com',
+  'att.net', 'sbcglobal.net', 'comcast.net', 'verizon.net']);
+type Group = { key: string; isDomain: boolean; threads: Thread[] };
+function groupQueue(ts: Thread[]): Group[] {
+  const map = new Map<string, Group>();
+  for (const t of ts) {
+    const domain = (t.from_email ?? '').split('@')[1] ?? '';
+    const isDomain = !!domain && !PERSONAL.has(domain);
+    const key = isDomain ? domain : (t.from_email ?? '(unknown)');
+    if (!map.has(key)) map.set(key, { key, isDomain, threads: [] });
+    map.get(key)!.threads.push(t);
+  }
+  return [...map.values()].sort((a, b) => b.threads.length - a.threads.length);
+}
+type GroupUndo = { key: string; isDomain: boolean; ids: { account_id: string; thread_id: string }[]; text: string };
 
 const BUCKET_LABEL = { 1: 'Junk', 2: 'Glance', 3: 'Real' } as const;
 const money = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
@@ -51,6 +73,9 @@ export default function Review() {
   const [filter, setFilter] = useState<Filter>('check');
   const [leaving, setLeaving] = useState<Set<string>>(new Set());
   const [checkedNow, setCheckedNow] = useState(0);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+  const [groupUndo, setGroupUndo] = useState<GroupUndo | null>(null);
+  const [domainPrefs, setDomainPrefs] = useState<{ domain: string; bucket: 1 | 2 | 3 }[]>([]);
   const [prefs, setPrefs] = useState<Pref[]>([]);
   const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState('');
@@ -60,7 +85,7 @@ export default function Review() {
 
   const load = useCallback(async () => {
     const monthStart = new Date(); monthStart.setDate(1); monthStart.setHours(0, 0, 0, 0);
-    const [t, r, u, p] = await Promise.all([
+    const [t, r, u, p, d] = await Promise.all([
       supabase.from('email_threads')
         .select('account_id, thread_id, subject, from_name, from_email, summary, reason, bucket, priority, category, classified_by, user_bucket, last_message_at, last_from_me, group_key')
         .eq('in_inbox', true).eq('status', 'classified')
@@ -69,10 +94,12 @@ export default function Review() {
       supabase.from('ai_usage').select('cost_usd').gte('created_at', monthStart.toISOString()).limit(10000),
       supabase.from('sender_prefs').select('sender_email, bucket, votes_1, votes_2, votes_3')
         .not('bucket', 'is', null).order('updated_at', { ascending: false }),
+      supabase.from('domain_prefs').select('domain, bucket').order('updated_at', { ascending: false }),
     ]);
     if (t.error) setError(t.error.message);
     setThreads((t.data ?? []) as Thread[]);
     setPrefs((p.data ?? []) as Pref[]);
+    setDomainPrefs((d.data ?? []) as { domain: string; bucket: 1 | 2 | 3 }[]);
     setRuns((r.data ?? []) as Run[]);
     setMonthCost((u.data ?? []).reduce((s, x) => s + Number(x.cost_usd), 0));
   }, []);
@@ -134,6 +161,59 @@ export default function Review() {
     }
   }
 
+  // One tap for a whole group. Companies go through review_domain (also remembers the
+  // domain for future mail); a personal address is just its own threads. Never touches
+  // priority mail or conversations you're in.
+  async function groupPick(g: Group, b: 1 | 2 | 3) {
+    setError(''); setLearnedMsg('');
+    let ids: { account_id: string; thread_id: string }[] = [];
+    if (g.isDomain) {
+      const { data, error } = await supabase.rpc('review_domain', { p_domain: g.key, p_bucket: b });
+      if (error) return setError(error.message);
+      ids = (data ?? []) as typeof ids;
+    } else {
+      ids = g.threads.filter(t => !t.priority && !t.last_from_me)
+        .map(t => ({ account_id: t.account_id, thread_id: t.thread_id }));
+      for (const acct of new Set(ids.map(i => i.account_id))) {
+        const { error } = await supabase.from('email_threads').update({ user_bucket: b })
+          .eq('account_id', acct).in('thread_id', ids.filter(i => i.account_id === acct).map(i => i.thread_id));
+        if (error) return setError(error.message);
+      }
+    }
+    setCheckedNow(n => n + ids.length);
+    setGroupUndo({
+      key: g.key, isDomain: g.isDomain, ids,
+      text: g.isDomain
+        ? `All ${ids.length} from ${g.key} → ${BUCKET_LABEL[b]}. New mail from ${g.key} will be sorted that way too.`
+        : `${ids.length} from ${g.key} → ${BUCKET_LABEL[b]}.`,
+    });
+    await load();
+  }
+
+  async function undoGroup() {
+    const u = groupUndo;
+    if (!u) return;
+    setGroupUndo(null);
+    if (u.isDomain) {
+      const { error } = await supabase.rpc('unreview_threads', { p_domain: u.key, p_threads: u.ids });
+      if (error) setError(error.message);
+    } else {
+      for (const acct of new Set(u.ids.map(i => i.account_id))) {
+        await supabase.from('email_threads').update({ user_bucket: null })
+          .eq('account_id', acct).in('thread_id', u.ids.filter(i => i.account_id === acct).map(i => i.thread_id));
+      }
+    }
+    setCheckedNow(n => Math.max(0, n - u.ids.length));
+    await load();
+  }
+
+  async function forgetDomain(domain: string) {
+    if (!confirm(`Stop sorting everything from ${domain} the same way? New mail from it goes back to normal sorting.`)) return;
+    const { error } = await supabase.from('domain_prefs').delete().eq('domain', domain);
+    if (error) return setError(error.message);
+    setDomainPrefs(ds => ds.filter(x => x.domain !== domain));
+  }
+
   async function forget(p: Pref) {
     if (!confirm(`Stop sorting ${p.sender_email} as ${BUCKET_LABEL[p.bucket]}? Its mail gets re-sorted on the next sync.`)) return;
     const { error } = await supabase.from('sender_prefs').delete().eq('sender_email', p.sender_email);
@@ -146,7 +226,7 @@ export default function Review() {
     const checked = ts.filter(isChecked);
     return {
       all: ts.length,
-      check: ts.length - checked.length,
+      check: ts.filter(inQueue).length,
       3: checked.filter(t => effective(t) === 3).length,
       2: checked.filter(t => effective(t) === 2).length,
       1: checked.filter(t => effective(t) === 1).length,
@@ -155,11 +235,12 @@ export default function Review() {
     };
   }, [threads, byId]);
 
-  // Queue order: what the cleanup would archive first (Junk, then Glance), then Real — newest first within each
+  const byNewest = (a: Thread, b: Thread) => Date.parse(b.last_message_at ?? '0') - Date.parse(a.last_message_at ?? '0');
   const shown = (threads ?? [])
-    .filter(t => (filter === 'check' ? !isChecked(t) : isChecked(t) && effective(t) === filter))
-    .sort((a, b) => (filter === 'check' ? (effective(a) ?? 3) - (effective(b) ?? 3) : 0)
-      || Date.parse(b.last_message_at ?? '0') - Date.parse(a.last_message_at ?? '0'));
+    .filter(t => (filter === 'check' ? inQueue(t) : isChecked(t) && effective(t) === filter))
+    .sort(byNewest);
+  // To check: biggest companies first, so the first few taps clear the most
+  const groups = useMemo(() => groupQueue((threads ?? []).filter(inQueue).sort(byNewest)), [threads]);
 
   // Latest run per account
   const latest = accounts.map(a => ({ a, r: runs.find(r => r.account_id === a.id) }));
@@ -218,12 +299,19 @@ export default function Review() {
 
         {filter === 'check' ? (
           <p className="muted small">
-            {counts.check} left to check{checkedNow ? ` · ${checkedNow} checked just now` : ''}.
-            Tap the right bucket — the highlighted one is how rlyfe sorted it. Nothing here changes your mail.
+            {counts.check} Junk &amp; Glance left to check{checkedNow ? ` · ${checkedNow} checked just now` : ''}.
+            One tap on a company card sorts all of it. ✓ marks how rlyfe sorted it. Nothing here changes your mail.
           </p>
         ) : (
           <p className="muted small">
             Checked as {BUCKET_LABEL[filter]}. Tap {BUCKET_LABEL[filter]} again to send one back to “To check”, or another bucket to move it.
+          </p>
+        )}
+
+        {groupUndo && (
+          <p className="notice undo-line">
+            <span>{groupUndo.text}</span>
+            <button className="link" onClick={undoGroup}>Undo</button>
           </p>
         )}
 
@@ -232,13 +320,92 @@ export default function Review() {
             filter === 'check'
               ? <p className="notice">Nothing to check — rlyfe is sorting the way you would.</p>
               : <p className="muted">Nothing checked as {BUCKET_LABEL[filter]} yet.</p>
+          ) : filter === 'check' ? (
+            <ul className="list">
+              {groups.map(g => {
+                if (g.threads.length === 1) return renderRow(g.threads[0]);
+                const n1 = g.threads.filter(t => effective(t) === 1).length;
+                const n2 = g.threads.length - n1;
+                const major: 1 | 2 = n1 >= n2 ? 1 : 2;
+                const names = [...new Set(g.threads.map(t => t.from_name || t.from_email))].slice(0, 3).join(', ');
+                const isOpen = open.has(g.key);
+                return [
+                  <li key={`g:${g.key}`} className="row review-row group-card">
+                    <div className="row-main">
+                      <div className="row-top">
+                        <span className="row-title ellipsis">{g.key}</span>
+                        <span className="muted small push">{g.threads.length} emails</span>
+                      </div>
+                      <div className="muted small">
+                        rlyfe sorted {[n1 && `${n1} Junk`, n2 && `${n2} Glance`].filter(Boolean).join(' · ')}
+                      </div>
+                      <div className="small ellipsis">{names}</div>
+                      <button className="link small show-each"
+                              onClick={() => setOpen(s => { const n = new Set(s); if (n.has(g.key)) n.delete(g.key); else n.add(g.key); return n; })}>
+                        {isOpen ? 'Hide' : 'Show each'}
+                      </button>
+                    </div>
+                    <div className="bucket-pick" aria-label={`Sort all of ${g.key}`}>
+                      {([3, 2, 1] as const).map(b => (
+                        <button key={b} className={['bp', b === major ? 'is-sorted' : ''].join(' ')}
+                                title={`All ${g.threads.length} → ${BUCKET_LABEL[b]}`}
+                                onClick={() => groupPick(g, b)}>
+                          {b === major ? `✓ ${BUCKET_LABEL[b]}` : BUCKET_LABEL[b]}
+                        </button>
+                      ))}
+                    </div>
+                  </li>,
+                  ...(isOpen ? g.threads.map(t => renderRow(t, true)) : []),
+                ];
+              })}
+            </ul>
           ) : (
             <ul className="list">
-              {shown.map(t => {
+              {shown.map(t => renderRow(t))}
+            </ul>
+          )}
+      </div>
+
+      <Activity accounts={byId} />
+
+      <div className="stack">
+        <h3>What rlyfe has learned</h3>
+        {prefs.length === 0 && domainPrefs.length === 0 ? (
+          <p className="muted small">Nothing yet. Check a few emails above and rlyfe remembers those senders.</p>
+        ) : (
+          <ul className="list">
+            {domainPrefs.map(d => (
+              <li key={`d:${d.domain}`} className="row">
+                <div className="row-main">
+                  <div className="ellipsis">Everything from {d.domain}</div>
+                  <div className="muted small">Always {BUCKET_LABEL[d.bucket]} · company-wide</div>
+                </div>
+                <button className="link" onClick={() => forgetDomain(d.domain)}>Forget</button>
+              </li>
+            ))}
+            {prefs.map(p => (
+              <li key={p.sender_email} className="row">
+                <div className="row-main">
+                  <div className="ellipsis">{p.sender_email}</div>
+                  <div className="muted small">
+                    Always {BUCKET_LABEL[p.bucket]} · from {p.votes_1 + p.votes_2 + p.votes_3} check{p.votes_1 + p.votes_2 + p.votes_3 > 1 ? 's' : ''}
+                  </div>
+                </div>
+                <button className="link" onClick={() => forget(p)}>Forget</button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+
+  // One thread row (used in every list; nested = shown under an expanded group card)
+  function renderRow(t: Thread, nested = false) {
                 const acct = byId.get(t.account_id);
                 const k = t.account_id + t.thread_id;
                 return (
-                  <li key={k} className={leaving.has(k) ? 'row review-row leaving' : 'row review-row'}>
+                  <li key={k} className={['row review-row', nested ? 'nested' : '', leaving.has(k) ? 'leaving' : ''].join(' ')}>
                     <div className="row-main">
                       <div className="row-top">
                         {t.priority && <span className="flag">Priority</span>}
@@ -272,33 +439,5 @@ export default function Review() {
                     </div>
                   </li>
                 );
-              })}
-            </ul>
-          )}
-      </div>
-
-      <Activity accounts={byId} />
-
-      <div className="stack">
-        <h3>What rlyfe has learned</h3>
-        {prefs.length === 0 ? (
-          <p className="muted small">Nothing yet. Tap Real / Glance / Junk on any thread and rlyfe remembers that sender.</p>
-        ) : (
-          <ul className="list">
-            {prefs.map(p => (
-              <li key={p.sender_email} className="row">
-                <div className="row-main">
-                  <div className="ellipsis">{p.sender_email}</div>
-                  <div className="muted small">
-                    Always {BUCKET_LABEL[p.bucket]} · from {p.votes_1 + p.votes_2 + p.votes_3} correction{p.votes_1 + p.votes_2 + p.votes_3 > 1 ? 's' : ''}
-                  </div>
-                </div>
-                <button className="link" onClick={() => forget(p)}>Forget</button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
-    </section>
-  );
+  }
 }
