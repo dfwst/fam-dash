@@ -40,7 +40,7 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   const [remind, setRemind] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
-  const href = acct ? gmailUrl(acct.email, t.thread_id) : undefined;
+  const href = acct ? gmailUrl(acct.email, t.thread_id, undefined, t.subject) : undefined;
   const reader = `/t/${t.account_id}/${t.thread_id}`;
 
   // Phone gestures: swipe right = Done, swipe left = Remind me

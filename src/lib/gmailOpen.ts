@@ -3,12 +3,14 @@
 // iPhone app, so there are a few candidate formats. Settings → "Open in Gmail" lets you
 // test them on your phone and pick the one that works; the choice is saved per device.
 
-export type OpenMode = 'web' | 'web_u' | 'app' | 'app_thread' | 'app_cv';
+export type OpenMode = 'web' | 'web_u' | 'app' | 'app_thread' | 'app_cv' | 'app_search' | 'app_search2';
 
 export const OPEN_MODES: { mode: OpenMode; label: string; help: string }[] = [
   { mode: 'app', label: 'Gmail app (inbox)', help: 'Opens the app on whatever account you used last. Always works.' },
   { mode: 'app_thread', label: 'Gmail app → this email (format A)', help: 'googlegmail:///thread?th=… — unofficial' },
   { mode: 'app_cv', label: 'Gmail app → this email (format B)', help: 'googlegmail:///cv=… — unofficial' },
+  { mode: 'app_search', label: 'Gmail app → search for it (format C)', help: 'googlegmail:///search?q=subject — lands on results, one tap away' },
+  { mode: 'app_search2', label: 'Gmail app → search for it (format D)', help: 'googlegmail://search?q=subject — same idea, other spelling' },
   { mode: 'web_u', label: 'Gmail link that may open the app', help: 'mail.google.com/mail/u/<account>/… — opens the app only if iOS hands it over' },
   { mode: 'web', label: 'Gmail website', help: 'Opens in Safari, signed in as the right account.' },
 ];
@@ -30,10 +32,18 @@ export function setOpenMode(mode: OpenMode) {
   try { localStorage.setItem(KEY, mode); } catch { /* ignore */ }
 }
 
-export function gmailUrl(email: string, threadId: string, mode: OpenMode = getOpenMode()): string {
+// Search terms for the "search" formats: the exact subject, cleaned of Re:/Fwd: and quotes
+const searchFor = (subject?: string | null) => {
+  const s = (subject ?? '').replace(/^\s*((re|fwd?|fw)\s*:\s*)+/i, '').replace(/"/g, '').trim().slice(0, 120);
+  return encodeURIComponent(s ? `subject:"${s}"` : '');
+};
+
+export function gmailUrl(email: string, threadId: string, mode: OpenMode = getOpenMode(), subject?: string | null): string {
   const e = encodeURIComponent(email);
   switch (mode) {
     case 'app': return 'googlegmail://';
+    case 'app_search': return `googlegmail:///search?q=${searchFor(subject)}`;
+    case 'app_search2': return `googlegmail://search?q=${searchFor(subject)}`;
     case 'app_thread': return `googlegmail:///thread?th=${threadId}&account=${e}`;
     case 'app_cv': return `googlegmail:///cv=${threadId}/accountId=${e}/searchview=1`;
     case 'web_u': return `https://mail.google.com/mail/u/${e}/#all/${threadId}`;

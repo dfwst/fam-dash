@@ -64,7 +64,7 @@ export default function ThreadView() {
   }
   if (!data) return <p className="muted">Loading email…</p>;
 
-  const href = gmailUrl(data.account, data.threadId);
+  const href = gmailUrl(data.account, data.threadId, undefined, data.subject);
 
   return (
     <section className="reader">
