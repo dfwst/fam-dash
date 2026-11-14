@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
+import Logo from '../app/Logo';
 
 // Every new sign-in: enter the current code from the authenticator app
 export default function MfaChallenge({ onDone }: { onDone: () => void }) {
@@ -26,6 +27,7 @@ export default function MfaChallenge({ onDone }: { onDone: () => void }) {
   return (
     <main className="card-page">
       <form className="card" onSubmit={verify}>
+        <div className="card-logo small"><Logo height={30} /></div>
         <h1>Enter your code</h1>
         <p className="muted">From your authenticator app.</p>
         <label>

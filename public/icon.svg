@@ -1,4 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" rx="112" fill="#3f6b5a"/>
-  <path d="M256 120 112 236v156h104v-96h80v96h104V236z" fill="#f6f4ef"/>
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512" fill="none">
+  <defs>
+    <clipPath id="clipIcon">
+      <rect x="12" y="12" width="488" height="488" rx="110" ry="110"/>
+    </clipPath>
+    <linearGradient id="gMain" x1="44" y1="44" x2="470" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#27B894"/>
+      <stop offset="1" stop-color="#64D6D1"/>
+    </linearGradient>
+    <linearGradient id="gMint" x1="44" y1="286" x2="214" y2="470" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C6F0DF"/>
+      <stop offset="1" stop-color="#AEEACF"/>
+    </linearGradient>
+  </defs>
+
+  <g clip-path="url(#clipIcon)">
+    <rect x="12" y="12" width="488" height="488" rx="110" ry="110" fill="url(#gMain)"/>
+
+    <!-- bottom-left pale panel -->
+    <path d="M 12 292 L 168 292 L 168 500 L 12 500 Z" fill="url(#gMint)"/>
+
+    <!-- white separators -->
+    <path d="M 12 292 H 168" stroke="#FFFFFF" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 171 292 V 500" stroke="#FFFFFF" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 166 292 C 198 246, 246 198, 340 198 H 500" stroke="#FFFFFF" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
 </svg>

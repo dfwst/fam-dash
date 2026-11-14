@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase';
 import TabPage from './TabPage';
 import Settings from './Settings';
 import Review from './Review';
+import Logo from './Logo';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 
@@ -48,7 +49,7 @@ export default function Shell() {
   return (
     <div className="shell">
       <header className="topbar">
-        <NavLink to="/" className="brand">rlyfe</NavLink>
+        <NavLink to="/" className="brand" aria-label="rlyfe home"><Logo height={22} /></NavLink>
         <div className="topbar-actions">
           <NavLink to="/review" className="link">Review</NavLink>
           <NavLink to="/settings" className="link">Settings</NavLink>

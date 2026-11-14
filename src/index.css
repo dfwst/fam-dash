@@ -159,3 +159,8 @@ a.todo:hover, button.todo:hover { border-color: var(--accent); }
 .glance-from { font-weight: 600; white-space: nowrap; max-width: 38%; overflow: hidden; text-overflow: ellipsis; }
 .glance-text { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }
 .tab .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #c0392b; margin-left: 6px; vertical-align: middle; }
+
+/* ── Logo ── */
+.card-logo { display: flex; justify-content: center; margin: 4px 0 10px; }
+.card-logo.small { justify-content: flex-start; margin: 0 0 6px; }
+.brand { display: inline-flex; align-items: center; padding: 4px 0; }

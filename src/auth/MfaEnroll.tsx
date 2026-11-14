@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
+import Logo from '../app/Logo';
 
 // First sign-in: set up an authenticator app (Google Authenticator, 1Password, etc.)
 export default function MfaEnroll({ onDone }: { onDone: () => void }) {
@@ -38,6 +39,7 @@ export default function MfaEnroll({ onDone }: { onDone: () => void }) {
   return (
     <main className="card-page">
       <form className="card" onSubmit={verify}>
+        <div className="card-logo small"><Logo height={30} /></div>
         <h1>Set up 2-step sign-in</h1>
         <p className="muted">Scan this with your authenticator app, then type the 6-digit code it shows.</p>
         {qr ? <img className="qr" src={qr} alt="Authenticator QR code" /> : <div className="qr muted center">…</div>}

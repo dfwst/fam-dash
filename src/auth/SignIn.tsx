@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { supabase } from '../lib/supabase';
+import Logo from '../app/Logo';
 
 export default function SignIn() {
   const [email, setEmail] = useState('');
@@ -20,7 +21,7 @@ export default function SignIn() {
   return (
     <main className="card-page">
       <form className="card" onSubmit={submit}>
-        <h1>rlyfe</h1>
+        <h1 className="card-logo"><Logo height={52} /></h1>
         <label>
           Email
           <input type="email" autoComplete="username" value={email}
