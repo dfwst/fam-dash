@@ -1,12 +1,14 @@
-/* Calm by default: warm neutral background, one muted green accent, no red except real errors. */
+/* Calm by default: warm neutral background, one green accent (from the rlyfe logo),
+   no red except real errors. Light accent is a deeper shade of the logo's #1da789 so
+   white button text passes WCAG AA (4.7:1); dark mode uses the logo's own #48c5aa. */
 :root {
   --bg: #f6f4ef;
   --surface: #ffffff;
   --text: #1f2326;
   --muted: #6b7075;
   --line: #e4e0d8;
-  --accent: #3f6b5a;
-  --accent-soft: #e3ece7;
+  --accent: #13836b;
+  --accent-soft: #dff4ec;
   --danger: #b3261e;
   --radius: 14px;
   color-scheme: light;
@@ -21,8 +23,8 @@
     --text: #e9e7e2;
     --muted: #9a9fa4;
     --line: #2e3237;
-    --accent: #7fb59f;
-    --accent-soft: #23302b;
+    --accent: #48c5aa;
+    --accent-soft: #183530;
     --danger: #f2b8b5;
     color-scheme: dark;
   }
@@ -56,7 +58,7 @@ button { font: inherit; cursor: pointer; }
 button.primary {
   min-height: 44px; border: 0; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600;
 }
-@media (prefers-color-scheme: dark) { button.primary { color: #10251c; } }
+@media (prefers-color-scheme: dark) { button.primary { color: #0f2a23; } }
 button.primary:disabled { opacity: .5; cursor: default; }
 button.link { background: none; border: 0; color: var(--muted); padding: 8px; }
 .qr { width: 200px; height: 200px; justify-self: center; background: #fff; border-radius: 8px; padding: 8px; }
@@ -118,7 +120,7 @@ a.row:hover { background: var(--accent-soft); }
 .bp { font-size: .75rem; padding: 4px 8px; min-width: 58px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--muted); }
 .bp.is-sorted { border-color: var(--accent); color: var(--text); font-weight: 600; }
 .bp.is-yours { background: var(--accent); border-color: var(--accent); color: #fff; }
-@media (prefers-color-scheme: dark) { .bp.is-yours { color: #10251c; } }
+@media (prefers-color-scheme: dark) { .bp.is-yours { color: #0f2a23; } }
 @media (max-width: 480px) { .topbar-actions a.link, .topbar-actions button.link { padding: 8px 4px; font-size: .9rem; } }
 
 /* ── To-do list (Milestone 3) ── */
