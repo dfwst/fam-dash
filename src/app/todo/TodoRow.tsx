@@ -1,5 +1,7 @@
 import { useRef, useState, type PointerEvent } from 'react';
-import { accountLabel, gmailLink, type Account } from '../../lib/accounts';
+import { Link } from 'react-router-dom';
+import { accountLabel, type Account } from '../../lib/accounts';
+import { gmailUrl, opensInNewTab } from '../../lib/gmailOpen';
 import { ago, isResurfaced, isUrgent, type Line, type TodoThread } from '../../lib/todos';
 import { remindPresets } from '../../lib/actions';
 
@@ -38,7 +40,8 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   const [remind, setRemind] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
-  const href = acct ? gmailLink(acct.email, t.thread_id) : undefined;
+  const href = acct ? gmailUrl(acct.email, t.thread_id) : undefined;
+  const reader = `/t/${t.account_id}/${t.thread_id}`;
 
   // Phone gestures: swipe right = Done, swipe left = Remind me
   const down = (e: PointerEvent) => {
@@ -67,7 +70,7 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
       </div>
       <div className="todo" style={dx ? { transform: `translateX(${dx}px)` } : undefined}
            onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
-        <a className="todo-body" href={href} target="_blank" rel="noreferrer" draggable={false}
+        <Link className="todo-body" to={reader} draggable={false}
            onClick={e => { if (Math.abs(dx) > 8) e.preventDefault(); }}>
           <div className="todo-top">
             {isUrgent(t) ? <span className="badge urgent">{t.category === 'security' ? 'Security' : 'Payment'}</span>
@@ -80,12 +83,12 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
           </div>
           <div className="todo-subject">{t.subject}</div>
           <div className="todo-summary">{t.summary || t.snippet}</div>
-        </a>
+        </Link>
         <div className="actions">
           <button onClick={() => onAction({ kind: 'done', thread: t })}>Done</button>
           <button onClick={() => onAction({ kind: 'ignore', thread: t })}>Ignore</button>
           <button onClick={() => setRemind(r => !r)} aria-expanded={remind}>Remind me</button>
-          {href && <a className="open" href={href} target="_blank" rel="noreferrer">Open ↗</a>}
+          {href && <a className="open" href={href} {...(opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Gmail ↗</a>}
         </div>
         {remind && (
           <RemindMenu onClose={() => setRemind(false)}

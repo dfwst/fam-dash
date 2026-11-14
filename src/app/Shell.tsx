@@ -5,6 +5,7 @@ import TabPage from './TabPage';
 import Settings from './Settings';
 import Review from './Review';
 import Logo from './Logo';
+import ThreadView from './reader/ThreadView';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 
@@ -78,6 +79,7 @@ export default function Shell() {
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
             <Route path="/settings" element={<Settings />} />
             <Route path="/review" element={<Review />} />
+            <Route path="/t/:accountId/:threadId" element={<ThreadView />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Tab } from './Shell';
-import { accountLabel, gmailLink, loadAccounts, type Account } from '../lib/accounts';
+import { Link } from 'react-router-dom';
+import { accountLabel, loadAccounts, type Account } from '../lib/accounts';
 import { ago, loadTabThreads, splitTodos, toLines, type TodoThread } from '../lib/todos';
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
@@ -194,14 +195,13 @@ export default function TabPage({ tab }: { tab: Tab }) {
           <h3 className="section-title">Worth a glance</h3>
           <ul className="glance">
             {glanceShown.map(t => {
-              const acct = byId.get(t.account_id);
               return (
                 <li key={key(t)}>
-                  <a href={acct ? gmailLink(acct.email, t.thread_id) : undefined} target="_blank" rel="noreferrer">
+                  <Link to={`/t/${t.account_id}/${t.thread_id}`}>
                     <span className="glance-from">{t.from_name || t.from_email}</span>
                     <span className="glance-text">{t.summary || t.subject}</span>
                     <span className="todo-meta">{ago(t.last_message_at)}</span>
-                  </a>
+                  </Link>
                 </li>
               );
             })}
@@ -225,11 +225,11 @@ export default function TabPage({ tab }: { tab: Tab }) {
                 const acct = byId.get(t.account_id);
                 return (
                   <li key={key(t)}>
-                    <a href={acct ? gmailLink(acct.email, t.thread_id) : undefined} target="_blank" rel="noreferrer">
+                    <Link to={`/t/${t.account_id}/${t.thread_id}`}>
                       <span className="glance-from">{t.subject}</span>
                       <span className="glance-text">{t.summary}</span>
                       <span className="todo-meta">{showAccount && acct ? `${accountLabel(acct)} · ` : ''}{ago(t.last_message_at)}</span>
-                    </a>
+                    </Link>
                   </li>
                 );
               })}

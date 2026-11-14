@@ -244,3 +244,33 @@ a, button { -webkit-tap-highlight-color: transparent; }
 .undo-line button { font-weight: 700; color: var(--accent); }
 /* Long unbreakable strings (URLs, addresses, codes) wrap instead of pushing past the screen */
 body { overflow-wrap: anywhere; }
+
+/* ── Reader ── */
+.reader { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr); padding-bottom: 90px; }
+.reader-head { display: flex; justify-content: space-between; align-items: center; }
+.back { padding-left: 0 !important; font-weight: 600; color: var(--accent) !important; }
+.reader-subject { font-size: 1.2rem; line-height: 1.3; }
+.reader-summary { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); font-size: .92rem; }
+.msgs { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; grid-template-columns: minmax(0, 1fr); }
+.msg { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); overflow: hidden; min-width: 0; }
+.msg-head { display: flex; gap: 8px; align-items: baseline; width: 100%; background: none; border: 0; color: inherit; font: inherit; padding: 12px 14px; text-align: left; cursor: pointer; }
+.msg-from { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-peek { padding: 0 14px 12px; }
+.msg-body { display: grid; gap: 8px; padding: 0 0 12px; grid-template-columns: minmax(0, 1fr); }
+.msg-to { padding: 0 14px; }
+.email-html { display: grid; gap: 6px; padding: 0 8px; }
+.email-html iframe { width: 100%; border: 0; border-radius: 10px; background: #fff; display: block; }
+.email-html .link { justify-self: start; padding: 4px 6px; }
+.email-text { margin: 0; padding: 0 14px; white-space: pre-wrap; font: inherit; font-size: .95rem; overflow-wrap: anywhere; }
+.attach { list-style: none; margin: 0; padding: 0 14px; font-size: .88rem; display: grid; gap: 4px; }
+.reader-actions {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; gap: 8px; justify-content: center;
+  padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--surface); border-top: 1px solid var(--line);
+}
+.reader-actions button { flex: 1; max-width: 180px; min-height: 44px; border-radius: 10px; border: 1px solid var(--line);
+  background: var(--bg); color: var(--accent); font-weight: 700; }
+.reader-remind { position: fixed; left: 0; right: 0; bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 11;
+  background: var(--surface); border-top: 1px solid var(--line); box-shadow: 0 -8px 24px rgba(0,0,0,.12); }
+.open-test .row-main { cursor: pointer; }
+.open-test input[type=radio] { width: 20px; height: 20px; min-height: 0; margin: 0; accent-color: var(--accent); }
+.open-test a.pill { text-decoration: none; }

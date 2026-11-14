@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { undo } from '../lib/actions';
-import { gmailLink, type Account } from '../lib/accounts';
+import { Link } from 'react-router-dom';
+import type { Account } from '../lib/accounts';
 
 // "Where did that email go?" — everything rlyfe changed in Gmail in the last 7 days,
 // newest first, each with Undo. Undoing a morning-sync archive also marks it Real
@@ -73,7 +74,7 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
                       </span>
                     </div>
                     {acct && e.thread_id
-                      ? <a className="ellipsis row-link" href={gmailLink(acct.email, e.thread_id)} target="_blank" rel="noreferrer">{title}</a>
+                      ? <Link className="ellipsis row-link" to={`/t/${e.account_id}/${e.thread_id}`}>{title}</Link>
                       : <div className="ellipsis">{title}</div>}
                     <div className="muted small ellipsis">
                       {e.payload.from_name ? `${e.payload.from_name} · ` : ''}{e.reason}

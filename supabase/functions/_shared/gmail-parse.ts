@@ -2,7 +2,7 @@
 // Message bodies are used only to sort/summarize — they are never stored.
 
 type Header = { name: string; value: string };
-type Part = { mimeType?: string; body?: { data?: string }; parts?: Part[]; headers?: Header[] };
+export type Part = { mimeType?: string; filename?: string; body?: { data?: string; size?: number }; parts?: Part[]; headers?: Header[] };
 export type GmailMessage = {
   id: string; labelIds?: string[]; internalDate: string; snippet?: string; payload: Part;
 };
@@ -25,16 +25,16 @@ export type ThreadFacts = {
   text: string; // latest message(s), cleaned and trimmed — for Claude only
 };
 
-const header = (m: GmailMessage, name: string) =>
+export const header = (m: GmailMessage, name: string) =>
   m.payload.headers?.find(h => h.name.toLowerCase() === name.toLowerCase())?.value ?? '';
 
-function b64urlText(data: string): string {
+export function b64urlText(data: string): string {
   const b64 = data.replace(/-/g, '+').replace(/_/g, '/');
   const bin = atob(b64.padEnd(Math.ceil(b64.length / 4) * 4, '='));
   return new TextDecoder().decode(Uint8Array.from(bin, c => c.charCodeAt(0)));
 }
 
-function findPart(p: Part, mime: string): Part | null {
+export function findPart(p: Part, mime: string): Part | null {
   if (p.mimeType === mime && p.body?.data) return p;
   for (const c of p.parts ?? []) {
     const hit = findPart(c, mime);

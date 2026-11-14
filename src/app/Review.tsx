@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '../lib/supabase';
 import { callFn } from '../lib/functions';
-import { gmailLink, loadAccounts, type Account } from '../lib/accounts';
+import { Link } from 'react-router-dom';
+import { loadAccounts, type Account } from '../lib/accounts';
 import Activity from './Activity';
 
 // Review = training rlyfe's sorting. Work through "To check" by confirming or correcting
@@ -409,8 +410,7 @@ export default function Review() {
                     <div className="row-main">
                       <div className="row-top">
                         {t.priority && <span className="flag">Priority</span>}
-                        <a className="row-title ellipsis" href={acct ? gmailLink(acct.email, t.thread_id) : '#'}
-                           target="_blank" rel="noreferrer">{t.from_name}</a>
+                        <Link className="row-title ellipsis" to={`/t/${t.account_id}/${t.thread_id}`}>{t.from_name}</Link>
                         <span className="muted small push">{t.last_message_at ? ago(t.last_message_at) : ''}</span>
                       </div>
                       <div className="ellipsis">{t.subject}</div>

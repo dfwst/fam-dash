@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { callFn } from '../lib/functions';
 import { supabase } from '../lib/supabase';
+import GmailOpenTest from './GmailOpenTest';
 import { loadAccounts, type Account } from '../lib/accounts';
 
 const ERRORS: Record<string, string> = {
@@ -104,6 +105,8 @@ export default function Settings() {
         rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
         Each account starts with morning cleanup off.
       </p>
+
+      <GmailOpenTest />
     </section>
   );
 }
