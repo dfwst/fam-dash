@@ -7,13 +7,16 @@ export type Account = {
   policy: 'read_only' | 'junk_only' | 'full';
   status: 'active' | 'needs_reconnect' | 'disabled';
   default_tab_id: string | null;
+  nickname: string | null;
   tabs: { name: string } | null;
 };
+
+export const accountLabel = (a: Account) => a.nickname || a.email.split('@')[0];
 
 export async function loadAccounts(tabId?: string): Promise<Account[]> {
   let q = supabase
     .from('connected_accounts')
-    .select('id, email, provider, policy, status, default_tab_id, tabs(name)')
+    .select('id, email, provider, policy, status, default_tab_id, nickname, tabs(name)')
     .order('email');
   if (tabId) q = q.eq('default_tab_id', tabId);
   const { data, error } = await q;
