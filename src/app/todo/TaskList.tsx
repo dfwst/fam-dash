@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
 import { dueLabel, duePresets, type Task } from '../../lib/tasks';
 
@@ -34,7 +35,7 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete }: {
                 <button className="task-title" onClick={() => setEditing(e => (e === t.id ? null : t.id))}>{t.title}</button>
                 {due && <span className={due.late ? 'task-due late' : 'task-due'}>{due.text}</span>}
                 {t.thread_id && t.account_id && (
-                  <Link className="task-mail" to={`/t/${t.account_id}/${t.thread_id}`} aria-label="Open the email">✉</Link>
+                  <Link className="task-mail" to={threadPath(t.account_id, t.thread_id)} aria-label="Open the email">✉</Link>
                 )}
                 {editing === t.id && (
                   <TaskEdit task={t} onClose={() => setEditing(null)}

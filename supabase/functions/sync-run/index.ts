@@ -49,7 +49,7 @@ Deno.serve(async (req) => {
 
   const { data: accounts } = await admin.from('connected_accounts')
     .select('id, household_id').in('household_id', householdIds)
-    .eq('status', 'active').eq('provider', 'google');
+    .eq('status', 'active');
 
   const runIds: string[] = [];
   let skipped = 0;

@@ -2,7 +2,7 @@ import { useRef, useState, type PointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import { accountLabel, type Account } from '../../lib/accounts';
 import { gmailUrl, opensInNewTab } from '../../lib/gmailOpen';
-import { ago, isResurfaced, isUrgent, type Line, type TodoThread } from '../../lib/todos';
+import { ago, isResurfaced, isUrgent, type Line, type TodoThread, threadPath } from '../../lib/todos';
 import { remindPresets } from '../../lib/actions';
 import AddTodo, { type NewTodo } from './AddTodo';
 
@@ -43,8 +43,9 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   const [adding, setAdding] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
-  const href = acct ? gmailUrl(acct.email, t.thread_id, undefined, t.subject) : undefined;
-  const reader = `/t/${t.account_id}/${t.thread_id}`;
+  const outlook = acct?.provider === 'microsoft';
+  const href = !acct ? undefined : outlook ? (t.web_link ?? undefined) : gmailUrl(acct.email, t.thread_id, undefined, t.subject);
+  const reader = threadPath(t.account_id, t.thread_id);
 
   // Phone gestures: swipe right = Done, swipe left = Remind me
   const down = (e: PointerEvent) => {
@@ -91,7 +92,7 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
           <button onClick={() => onAction({ kind: 'done', thread: t })}>Done</button>
           <button onClick={() => onAction({ kind: 'ignore', thread: t })}>Ignore</button>
           <button onClick={() => { setAdding(a => !a); setRemind(false); }} aria-expanded={adding}>+ To-Do</button>
-          {href && <a className="open" href={href} {...(opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Gmail ↗</a>}
+          {href && <a className="open" href={href} {...(outlook || opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>{outlook ? 'Outlook' : 'Gmail'} ↗</a>}
         </div>
         {adding && (
           <AddTodo initialTitle={t.subject || t.summary || ''} onClose={() => setAdding(false)}

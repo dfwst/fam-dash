@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { Tab } from './Shell';
 import { Link } from 'react-router-dom';
 import { accountLabel, loadAccounts, type Account } from '../lib/accounts';
-import { ago, loadTabThreads, splitTodos, toLines, type TodoThread } from '../lib/todos';
+import { ago, loadTabThreads, splitTodos, toLines, type TodoThread, threadPath } from '../lib/todos';
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
 import TaskList from './todo/TaskList';
@@ -154,7 +154,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
     try {
       const r = await act.alwaysIgnore(sender);
       show({
-        text: `Gmail will skip the inbox for ${name} from now on`
+        text: `Your mailbox will skip the inbox for ${name} from now on`
           + (r.archived ? ` · ${r.archived} more archived` : '') + '. Undo it from Review → Activity.',
         logIds: [], kind: 'filter', at: Date.now(),
       });
@@ -251,7 +251,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
             {glanceShown.map(t => {
               return (
                 <li key={key(t)}>
-                  <Link to={`/t/${t.account_id}/${t.thread_id}`}>
+                  <Link to={threadPath(t.account_id, t.thread_id)}>
                     <span className="glance-from">{t.from_name || t.from_email}</span>
                     <span className="glance-text">{t.summary || t.subject}</span>
                     <span className="todo-meta">{ago(t.last_message_at)}</span>
@@ -279,7 +279,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
                 const acct = byId.get(t.account_id);
                 return (
                   <li key={key(t)}>
-                    <Link to={`/t/${t.account_id}/${t.thread_id}`}>
+                    <Link to={threadPath(t.account_id, t.thread_id)}>
                       <span className="glance-from">{t.subject}</span>
                       <span className="glance-text">{t.summary}</span>
                       <span className="todo-meta">{showAccount && acct ? `${accountLabel(acct)} · ` : ''}{ago(t.last_message_at)}</span>

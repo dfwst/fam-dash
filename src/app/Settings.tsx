@@ -11,6 +11,8 @@ const ERRORS: Record<string, string> = {
   'no-refresh-token': "Google didn't grant offline access. Try again.",
   'missing-scopes': 'Some permissions were unchecked on the Google screen. Try again and leave them all checked.',
   'connect-failed': "Couldn't save the account. Try again.",
+  'ms-admin-approval': "Your organization's IT has to approve rlyfe before this work account can connect.",
+  'ms-not-configured': "Microsoft sign-in isn't set up on the server yet.",
 };
 
 // What the MORNING SYNC may do on its own. Your own taps (Done, Ignore…) work on every account.
@@ -54,14 +56,16 @@ export default function Settings() {
     setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, nickname: next } : x)) ?? null);
   }
 
-  async function connect(loginHint?: string) {
+  async function connect(provider: Account['provider'], loginHint?: string) {
     setBusy(true);
     setError('');
     try {
-      const { url } = await callFn<{ url: string }>('google-oauth-start', { loginHint });
+      const fn = provider === 'microsoft' ? 'ms-oauth-start' : 'google-oauth-start';
+      const { url } = await callFn<{ url: string }>(fn, { loginHint });
       window.location.href = url; // off to Google; we come back to /settings
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Something went wrong');
+      const msg = e instanceof Error ? e.message : 'Something went wrong';
+      setError(ERRORS[msg] ?? msg);
       setBusy(false);
     }
   }
@@ -86,7 +90,7 @@ export default function Settings() {
             <li key={a.id} className="row">
               <div className="row-main">
                 <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">{a.tabs?.name ?? 'No tab'}</div>
+                <div className="muted small">{a.provider === 'microsoft' ? 'Microsoft' : 'Gmail'} · {a.tabs?.name ?? 'No tab'}</div>
                 <NicknameField account={a} onSave={n => setNickname(a, n)} />
                 <label className="policy">
                   <span className="muted small">Morning cleanup</span>
@@ -99,7 +103,7 @@ export default function Settings() {
                 <div className="muted small">{POLICY[a.policy].help}</div>
               </div>
               {a.status === 'needs_reconnect' ? (
-                <button className="pill warn" disabled={busy} onClick={() => connect(a.email)}>Reconnect</button>
+                <button className="pill warn" disabled={busy} onClick={() => connect(a.provider, a.email)}>Reconnect</button>
               ) : (
                 <span className="pill">Connected</span>
               )}
@@ -108,12 +112,17 @@ export default function Settings() {
         </ul>
       )}
 
-      <button className="primary" disabled={busy} onClick={() => connect()}>
-        {busy ? 'Opening Google…' : 'Connect a Gmail account'}
-      </button>
+      <div className="connect-buttons">
+        <button className="primary" disabled={busy} onClick={() => connect('google')}>
+          {busy ? 'Opening sign-in…' : 'Connect Gmail'}
+        </button>
+        <button className="primary" disabled={busy} onClick={() => connect('microsoft')}>
+          Connect Outlook / Microsoft 365
+        </button>
+      </div>
       <p className="muted small">
         rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
-        Each account starts with morning cleanup off.
+        Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
       </p>
 
       <GmailOpenTest />

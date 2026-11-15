@@ -17,7 +17,10 @@ type Msg = {
   date: string; unread: boolean; sentByYou: boolean; html: string | null; text: string | null;
   attachments: { name: string; size: number }[];
 };
-type ThreadData = { threadId: string; account: string; subject: string; messages: Msg[] };
+type ThreadData = {
+  threadId: string; account: string; provider: 'google' | 'microsoft'; webLink: string | null;
+  subject: string; messages: Msg[];
+};
 
 const when = (iso: string) => new Date(iso).toLocaleString([], {
   weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
@@ -77,13 +80,14 @@ export default function ThreadView() {
   }
   if (!data) return <p className="muted">Loading email…</p>;
 
-  const href = gmailUrl(data.account, data.threadId, undefined, data.subject);
+  const outlook = data.provider === 'microsoft';
+  const href = outlook ? data.webLink : gmailUrl(data.account, data.threadId, undefined, data.subject);
 
   return (
     <section className="reader">
       <div className="reader-head">
         <button className="link back" onClick={() => nav(-1)}>← Back</button>
-        <a className="link" href={href} {...(opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Open in Gmail ↗</a>
+        {href && <a className="link" href={href} {...(outlook || opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Open in {outlook ? 'Outlook' : 'Gmail'} ↗</a>}
       </div>
       <h2 className="reader-subject">{data.subject}</h2>
       <p className="muted small">{data.account} · {data.messages.length} message{data.messages.length > 1 ? 's' : ''}</p>

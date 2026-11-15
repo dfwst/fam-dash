@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { threadPath } from '../lib/todos';
 import { supabase } from '../lib/supabase';
 import { callFn } from '../lib/functions';
 import { Link } from 'react-router-dom';
@@ -410,7 +411,7 @@ export default function Review() {
                     <div className="row-main">
                       <div className="row-top">
                         {t.priority && <span className="flag">Priority</span>}
-                        <Link className="row-title ellipsis" to={`/t/${t.account_id}/${t.thread_id}`}>{t.from_name}</Link>
+                        <Link className="row-title ellipsis" to={threadPath(t.account_id, t.thread_id)}>{t.from_name}</Link>
                         <span className="muted small push">{t.last_message_at ? ago(t.last_message_at) : ''}</span>
                       </div>
                       <div className="ellipsis">{t.subject}</div>

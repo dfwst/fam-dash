@@ -324,3 +324,5 @@ body { overflow-wrap: anywhere; }
 .ptr-icon.spin { animation: ptr-spin .8s linear infinite; }
 @keyframes ptr-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ptr-icon.spin { animation: none; } }
+.connect-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.connect-buttons button { flex: 1 1 200px; }

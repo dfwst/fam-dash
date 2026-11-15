@@ -14,6 +14,13 @@
   status = 200
   force = true
 
+# Microsoft sign-in callback — same idea as Google's, above the catch-all
+[[redirects]]
+  from = "/oauth/microsoft/callback"
+  to = "https://obubqqolwnglbafaqdbp.supabase.co/functions/v1/ms-oauth-callback"
+  status = 200
+  force = true
+
 # Single-page app: every path loads index.html, React Router takes it from there
 [[redirects]]
   from = "/*"

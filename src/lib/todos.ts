@@ -22,10 +22,15 @@ export type TodoThread = {
   in_inbox: boolean;
   snoozed_until: string | null;
   acted: 'done' | 'ignored' | 'archived' | null; // done/ignored = you handled it; archived = morning cleanup
+  web_link: string | null; // Outlook on the web (Microsoft accounts)
 };
 
+// In-app reader URL. Microsoft conversation ids contain / + = so they must be encoded.
+export const threadPath = (accountId: string, threadId: string) =>
+  `/t/${accountId}/${encodeURIComponent(threadId)}`;
+
 const COLS = 'account_id, thread_id, subject, from_name, from_email, summary, snippet, bucket, user_bucket, '
-  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until, acted';
+  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until, acted, web_link';
 
 // Snoozed and the time has come → back at the top of the list
 export const isResurfaced = (t: TodoThread) => !!t.snoozed_until && Date.parse(t.snoozed_until) <= Date.now();

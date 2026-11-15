@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { threadPath } from '../lib/todos';
 import { supabase } from '../lib/supabase';
 import { undo } from '../lib/actions';
 import { Link } from 'react-router-dom';
@@ -74,7 +75,7 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
                       </span>
                     </div>
                     {acct && e.thread_id
-                      ? <Link className="ellipsis row-link" to={`/t/${e.account_id}/${e.thread_id}`}>{title}</Link>
+                      ? <Link className="ellipsis row-link" to={threadPath(e.account_id, e.thread_id!)}>{title}</Link>
                       : <div className="ellipsis">{title}</div>}
                     <div className="muted small ellipsis">
                       {e.payload.from_name ? `${e.payload.from_name} · ` : ''}{e.reason}

@@ -1,4 +1,5 @@
-// Internal worker: sync + sort ONE account for ONE sync_run. Called by sync-run (and by itself).
+// Internal worker: sync + sort ONE account (Gmail or Microsoft) for ONE sync_run.
+// Called by sync-run (and by itself). Talks to mail only through the Mailbox layer.
 // Auth: Bearer <service role key> — never called from the browser.
 //
 // Changes mail ONLY in step 4, and only on accounts whose cleanup policy isn't read_only:
@@ -16,21 +17,21 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
 import { adminClient, SB_URL } from '../_shared/auth.ts';
 import { json } from '../_shared/http.ts';
-import { gmail, modifyThread } from '../_shared/google.ts';
-import { accessTokenFor, NeedsReconnect } from '../_shared/accounts.ts';
-import { threadFacts, type GmailThread } from '../_shared/gmail-parse.ts';
+import { NeedsReconnect, type Provider } from '../_shared/accounts.ts';
+import { openMailbox, type Mailbox } from '../_shared/mailbox.ts';
+import { threadFacts } from '../_shared/gmail-parse.ts';
 import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
 import { classifyWithClaude, type Correction } from '../_shared/classify.ts';
 
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SELF = `${SB_URL}/functions/v1/sync-account`;
-const WINDOW = 'newer_than:30d';
+const WINDOW_DAYS = 30;
 const BUDGET_MS = 110_000;
-const CONCURRENCY = 3; // Gmail's per-mailbox rate limit; gmail() also backs off if we hit it
+const CONCURRENCY = 3; // per-mailbox rate limits; both providers' helpers also back off if we hit them
 const MAX_CHAIN = 40;
 const MAX_ATTEMPTS = 3;
 
-type Acct = { id: string; email: string; policy: string; ai_context: string | null; household_id: string };
+type Acct = { id: string; email: string; provider: Provider; policy: string; ai_context: string | null; household_id: string };
 type Stats = Record<string, number>;
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
@@ -52,15 +53,15 @@ async function work(runId: string, chain: number) {
   if (!run || run.status !== 'running') return;
 
   const { data: acct } = await admin.from('connected_accounts')
-    .select('id, email, policy, ai_context, household_id').eq('id', run.account_id).single<Acct>();
+    .select('id, email, provider, policy, ai_context, household_id').eq('id', run.account_id).single<Acct>();
   if (!acct) return;
 
   const stats: Stats = { ...(run.stats ?? {}) };
   try {
-    const token = await accessTokenFor(admin, acct.id);
-    if (chain === 0) Object.assign(stats, await discover(admin, acct, token));
+    const mb = await openMailbox(admin, acct);
+    if (chain === 0) Object.assign(stats, await discover(admin, acct, mb));
 
-    const remaining = await sortPending(admin, acct, token, runId, started, stats);
+    const remaining = await sortPending(admin, acct, mb, runId, started, stats);
 
     if (remaining > 0 && chain < MAX_CHAIN) {
       await admin.from('sync_runs').update({ stats, chain: chain + 1 }).eq('id', runId);
@@ -72,7 +73,7 @@ async function work(runId: string, chain: number) {
       return;
     }
 
-    await autoArchive(admin, acct, token, runId, stats);
+    await autoArchive(admin, acct, mb, runId, stats);
     await finalize(admin, acct, runId, stats, remaining);
   } catch (e) {
     const msg = e instanceof NeedsReconnect ? 'needs-reconnect' : (e instanceof Error ? e.message : String(e));
@@ -85,16 +86,9 @@ async function work(runId: string, chain: number) {
 
 // ── 1. discover ─────────────────────────────────────────────────────
 
-async function discover(admin: SupabaseClient, acct: Acct, token: string): Promise<Stats> {
-  const listed: { id: string; historyId: string }[] = [];
-  let pageToken: string | undefined;
-  do {
-    const r = await gmail<{ threads?: { id: string; historyId: string }[]; nextPageToken?: string }>(
-      'threads', token,
-      { labelIds: 'INBOX', q: WINDOW, maxResults: '500', ...(pageToken ? { pageToken } : {}) });
-    listed.push(...(r.threads ?? []));
-    pageToken = r.nextPageToken;
-  } while (pageToken && listed.length < 5000);
+// gmail_history_id holds each thread's version (Gmail historyId, or Microsoft's newest-change stamp)
+async function discover(admin: SupabaseClient, acct: Acct, mb: Mailbox): Promise<Stats> {
+  const listed = (await mb.listInbox(WINDOW_DAYS)).map(t => ({ id: t.id, historyId: t.version }));
 
   const existing = await selectAll<{ thread_id: string; gmail_history_id: string | null; in_inbox: boolean }>(
     admin, 'email_threads', 'thread_id, gmail_history_id, in_inbox', q => q.eq('account_id', acct.id));
@@ -128,7 +122,7 @@ async function discover(admin: SupabaseClient, acct: Acct, token: string): Promi
 type Row = { thread_id: string; last_message_id: string | null; bucket: number | null; attempts: number };
 
 async function sortPending(
-  admin: SupabaseClient, acct: Acct, token: string, runId: string, started: number, stats: Stats,
+  admin: SupabaseClient, acct: Acct, mb: Mailbox, runId: string, started: number, stats: Stats,
 ): Promise<number> {
   const bump = (k: string, n = 1) => { stats[k] = (stats[k] ?? 0) + n; };
   const failed = new Set<string>(); // failed this invocation → retried by the next one, not now
@@ -157,7 +151,7 @@ async function sortPending(
     let q = admin.from('email_threads')
       .select('thread_id, last_message_id, bucket, attempts')
       .eq('account_id', acct.id).in('status', ['pending', 'error']).lt('attempts', MAX_ATTEMPTS);
-    if (failed.size) q = q.not('thread_id', 'in', `(${[...failed].join(',')})`);
+    if (failed.size) q = q.not('thread_id', 'in', `(${[...failed].map(id => `"${id}"`).join(',')})`); // quoted: Microsoft ids hold = + /
     const { data: batch } = await q.order('first_seen_at', { ascending: false }).limit(CONCURRENCY * 4);
     const todo = (batch ?? []) as Row[];
     if (!todo.length) break;
@@ -165,10 +159,12 @@ async function sortPending(
     await pool(todo, CONCURRENCY, async (row) => {
       if (Date.now() - started > BUDGET_MS) return;
       try {
-        const full = await gmail<GmailThread>(`threads/${row.thread_id}`, token, { format: 'full' });
+        const full = await mb.getThread(row.thread_id);
         const f = threadFacts(full, acct.email);
         const base = {
-          gmail_history_id: full.historyId, last_message_id: f.lastMessageId,
+          ...(full.historyId ? { gmail_history_id: full.historyId } : {}), // Microsoft: keep discover's version
+          web_link: full.webLink ?? null,
+          last_message_id: f.lastMessageId,
           subject: f.subject.slice(0, 300), from_name: f.fromName.slice(0, 200), from_email: f.fromEmail,
           snippet: f.snippet.slice(0, 300), last_message_at: f.date.toISOString(),
           message_count: f.messageCount, unread: f.unread, last_from_me: f.lastFromMe,
@@ -255,7 +251,7 @@ async function save(admin: SupabaseClient, accountId: string, threadId: string, 
 const MAX_ARCHIVE_PER_RUN = 300;
 const BUCKET_NAME = ['', 'Junk', 'Glance', 'Real'];
 
-async function autoArchive(admin: SupabaseClient, acct: Acct, token: string, runId: string, stats: Stats) {
+async function autoArchive(admin: SupabaseClient, acct: Acct, mb: Mailbox, runId: string, stats: Stats) {
   const allowed = acct.policy === 'full' ? [1, 2] : acct.policy === 'junk_only' ? [1] : [];
   if (!allowed.length) return; // read_only: never touch mail
 
@@ -277,7 +273,7 @@ async function autoArchive(admin: SupabaseClient, acct: Acct, token: string, run
   let archived = 0;
   await pool(targets, CONCURRENCY, async (t) => {
     try {
-      await modifyThread(t.thread_id, token, { removeLabelIds: ['INBOX', 'UNREAD'] });
+      await mb.archive(t.thread_id);
       const now = new Date().toISOString();
       await save(admin, acct.id, t.thread_id, { in_inbox: false, acted: 'archived', acted_at: now, updated_at: now });
       const b = t.user_bucket ?? t.bucket ?? 0;

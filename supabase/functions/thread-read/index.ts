@@ -3,9 +3,9 @@
 // and only travels to your browser.
 import { requireMember } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
-import { gmail } from '../_shared/google.ts';
-import { accessTokenFor, NeedsReconnect } from '../_shared/accounts.ts';
-import { b64urlText, findPart, header, parseFrom, type GmailThread, type Part } from '../_shared/gmail-parse.ts';
+import { NeedsReconnect } from '../_shared/accounts.ts';
+import { isValidThreadId, openMailbox } from '../_shared/mailbox.ts';
+import { b64urlText, findPart, header, parseFrom, type Part } from '../_shared/gmail-parse.ts';
 
 const MAX_HTML = 400_000; // characters per message — enough for any normal email
 
@@ -22,12 +22,12 @@ Deno.serve(async (req) => {
 
   const { accountId, threadId } = await req.json().catch(() => ({}));
   const { data: acct } = await ctx.admin.from('connected_accounts')
-    .select('id, email').eq('id', accountId ?? '').eq('household_id', ctx.householdId).maybeSingle();
-  if (!acct || typeof threadId !== 'string' || !/^[0-9a-f]+$/i.test(threadId)) return json({ error: 'not-found' }, 404);
+    .select('id, email, provider').eq('id', accountId ?? '').eq('household_id', ctx.householdId).maybeSingle();
+  if (!acct || !isValidThreadId(acct.provider, threadId)) return json({ error: 'not-found' }, 404);
 
   try {
-    const token = await accessTokenFor(ctx.admin, acct.id);
-    const t = await gmail<GmailThread>(`threads/${threadId}`, token, { format: 'full' });
+    const mb = await openMailbox(ctx.admin, acct);
+    const t = await mb.getThread(threadId, { attachments: true });
     const messages = t.messages.map(m => {
       const html = findPart(m.payload, 'text/html');
       const plain = findPart(m.payload, 'text/plain');
@@ -48,6 +48,8 @@ Deno.serve(async (req) => {
     return json({
       threadId: t.id,
       account: acct.email,
+      provider: acct.provider,
+      webLink: t.webLink ?? null, // Outlook on the web link (Microsoft only)
       subject: messages[0]?.subject || '(no subject)',
       messages,
     });

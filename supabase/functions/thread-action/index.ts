@@ -7,15 +7,16 @@
 //                                                → { logId, offerAlwaysIgnore, sender }
 //   { action: 'snooze', accountId, threadId, until }  hide from rlyfe until then (Gmail untouched)
 //   { action: 'unsnooze', accountId, threadId }
-//   { action: 'always_ignore', sender }         Gmail filter "skip inbox + mark read" in each
+//   { action: 'always_ignore', sender }         mailbox rule "skip inbox + mark read" (Gmail filter /
+//                                                Outlook inbox rule) in each
 //                                                account that gets this sender's mail, and
 //                                                archive what's already there
 //   { action: 'undo', logId }                    reverse any of the above
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
 import { requireMember, type Ctx } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
-import { gmailRequest, modifyThread } from '../_shared/google.ts';
-import { accessTokenFor, NeedsReconnect } from '../_shared/accounts.ts';
+import { NeedsReconnect } from '../_shared/accounts.ts';
+import { openMailbox, type Mailbox } from '../_shared/mailbox.ts';
 
 const OFFER_AFTER = 2; // offer "Always ignore?" from the 2nd ignore of the same sender
 
@@ -55,6 +56,14 @@ async function loadThread(ctx: Ctx, accountId: string, threadId: string) {
   return t;
 }
 
+// The account's mailbox (Gmail or Microsoft) — only ever this household's accounts
+async function mailboxFor(ctx: Ctx, accountId: string): Promise<Mailbox> {
+  const { data } = await ctx.admin.from('connected_accounts').select('id, email, provider')
+    .eq('id', accountId).eq('household_id', ctx.householdId).maybeSingle();
+  if (!data) throw new Refused('not-found');
+  return openMailbox(ctx.admin, data);
+}
+
 async function log(admin: SupabaseClient, row: Record<string, unknown>): Promise<number> {
   const { data, error } = await admin.from('action_log').insert(row).select('id').single();
   if (error) throw error;
@@ -65,8 +74,7 @@ async function log(admin: SupabaseClient, row: Record<string, unknown>): Promise
 
 async function archive(ctx: Ctx, accountId: string, threadId: string, kind: 'done' | 'ignore') {
   const t = await loadThread(ctx, accountId, threadId);
-  const token = await accessTokenFor(ctx.admin, t.account_id);
-  await modifyThread(t.thread_id, token, { removeLabelIds: ['INBOX', 'UNREAD'] });
+  await (await mailboxFor(ctx, t.account_id)).archive(t.thread_id);
 
   const now = new Date().toISOString();
   await ctx.admin.from('email_threads').update({
@@ -134,20 +142,18 @@ async function alwaysIgnore(ctx: Ctx, sender: string) {
   let archived = 0;
 
   for (const accountId of accountIds) {
-    const token = await accessTokenFor(ctx.admin, accountId);
+    const mb = await mailboxFor(ctx, accountId);
     if (!filters[accountId]) {
-      const f = await gmailRequest<{ id: string }>('POST', 'settings/filters', token, {
-        body: { criteria: { from: sender }, action: { removeLabelIds: ['INBOX', 'UNREAD'] } },
-      });
-      filters[accountId] = f.id;
+      const ruleId = await mb.addIgnoreRule(sender);
+      filters[accountId] = ruleId;
       await log(ctx.admin, {
         household_id: ctx.householdId, account_id: accountId, action: 'create_filter', source: 'user',
-        user_id: ctx.userId, reason: `Always ignore ${sender}`, payload: { filter_id: f.id, sender },
+        user_id: ctx.userId, reason: `Always ignore ${sender}`, payload: { filter_id: ruleId, sender },
       });
     }
     // Clear what's already in the inbox (except anything you marked Real)
     for (const r of (rows ?? []).filter(r => r.account_id === accountId && r.in_inbox && r.user_bucket !== 3)) {
-      await modifyThread(r.thread_id, token, { removeLabelIds: ['INBOX', 'UNREAD'] });
+      await mb.archive(r.thread_id);
       await ctx.admin.from('email_threads').update({ in_inbox: false, acted: 'ignored', acted_at: now, updated_at: now })
         .eq('account_id', accountId).eq('thread_id', r.thread_id);
       await log(ctx.admin, {
@@ -174,10 +180,7 @@ async function undo(ctx: Ctx, logId: number) {
   const now = new Date().toISOString();
 
   if (entry.action === 'archive') {
-    const token = await accessTokenFor(ctx.admin, entry.account_id);
-    await modifyThread(entry.thread_id, token, {
-      addLabelIds: entry.payload?.was_unread ? ['INBOX', 'UNREAD'] : ['INBOX'],
-    });
+    await (await mailboxFor(ctx, entry.account_id)).unarchive(entry.thread_id, !!entry.payload?.was_unread);
     const back: Record<string, unknown> = { in_inbox: true, acted: null, acted_at: null, updated_at: now };
     // Rescuing something the morning sync archived means "this was Real" — that also teaches the sender
     if (entry.source === 'sync') back.user_bucket = 3;
@@ -186,8 +189,8 @@ async function undo(ctx: Ctx, logId: number) {
     await ctx.admin.from('email_threads').update({ snoozed_until: null, updated_at: now })
       .eq('account_id', entry.account_id).eq('thread_id', entry.thread_id);
   } else if (entry.action === 'create_filter') {
-    const token = await accessTokenFor(ctx.admin, entry.account_id);
-    await gmailRequest('DELETE', `settings/filters/${entry.payload.filter_id}`, token).catch(() => {}); // already gone is fine
+    const mb = await mailboxFor(ctx, entry.account_id);
+    await mb.removeIgnoreRule(entry.payload.filter_id).catch(() => {}); // already gone is fine
     const { data: pref } = await ctx.admin.from('sender_prefs').select('gmail_filters')
       .eq('household_id', ctx.householdId).eq('sender_email', entry.payload.sender).maybeSingle();
     const filters = { ...(pref?.gmail_filters ?? {}) };

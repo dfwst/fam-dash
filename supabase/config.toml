@@ -5,3 +5,14 @@ project_id = "obubqqolwnglbafaqdbp"
 # The one-time OAuth `state` authenticates it instead.
 [functions.google-oauth-callback]
 verify_jwt = false
+
+# Microsoft redirects here directly — same one-time `state` check as Google.
+[functions.ms-oauth-callback]
+verify_jwt = false
+
+# Called by pg_cron (x-cron-token) or by sync-run with the service key — they check it themselves.
+[functions.sync-run]
+verify_jwt = false
+
+[functions.sync-account]
+verify_jwt = false
