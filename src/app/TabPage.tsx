@@ -5,6 +5,8 @@ import { accountLabel, loadAccounts, type Account } from '../lib/accounts';
 import { ago, loadTabThreads, splitTodos, toLines, type TodoThread } from '../lib/todos';
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
+import TaskList from './todo/TaskList';
+import * as tasksApi from '../lib/tasks';
 
 // One tab's calm view:
 //   - To-do: Real mail someone is waiting on you for. Top 5 lines, the rest behind "N more".
@@ -21,6 +23,7 @@ type Toast = {
   at: number;
   offer?: { sender: string; name: string };
   error?: boolean;
+  undoFn?: () => Promise<unknown>; // To-Do items undo in the database, not Gmail
 };
 
 const key = (t: Pick<TodoThread, 'account_id' | 'thread_id'>) => t.account_id + t.thread_id;
@@ -29,6 +32,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [inbox, setInbox] = useState<TodoThread[] | null>(null);
   const [glance, setGlance] = useState<TodoThread[]>([]);
+  const [tasks, setTasks] = useState<tasksApi.Task[]>([]);
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [showGlance, setShowGlance] = useState(false);
@@ -39,8 +43,9 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
   const load = useCallback(async () => {
     try {
-      const accts = await loadAccounts(tab.id);
+      const [accts, taskList] = await Promise.all([loadAccounts(tab.id), tasksApi.loadTasks(tab.id)]);
       setAccounts(accts);
+      setTasks(taskList);
       const r = await loadTabThreads(accts.map(a => a.id));
       setInbox(r.inbox);
       setGlance(r.glance);
@@ -73,6 +78,22 @@ export default function TabPage({ tab }: { tab: Tab }) {
     const t = a.thread;
     const who = t.from_name || t.from_email || 'that';
     try {
+      if (a.kind === 'todo') {
+        const acct = accounts?.find(x => x.id === t.account_id);
+        const task = await tasksApi.addTask({
+          title: a.todo.title, due_on: a.todo.due_on, tab_id: acct?.default_tab_id ?? tab.id,
+          account_id: t.account_id, thread_id: t.thread_id,
+        });
+        if (task.tab_id === tab.id) setTasks(list => [...list, task]);
+        if (!a.todo.alsoDone) {
+          show({ text: 'Added to To-Do', logIds: [], kind: 'todo', at: Date.now() });
+          return;
+        }
+        optimistic(t, 'remove');
+        const r = await act.done(t);
+        show({ text: 'Added to To-Do · email archived', logIds: [r.logId], kind: 'todo', at: Date.now() });
+        return;
+      }
       if (a.kind === 'snooze') {
         optimistic(t, { snoozed_until: a.until.toISOString() });
         const r = await act.snooze(t, a.until);
@@ -112,8 +133,10 @@ export default function TabPage({ tab }: { tab: Tab }) {
   async function undoToast() {
     if (!toast) return;
     const ids = toast.logIds;
+    const fn = toast.undoFn;
     setToast(null);
     try {
+      if (fn) await fn();
       for (const id of ids) await act.undo(id);
     } catch {
       show({ text: "Couldn't undo — check Gmail.", logIds: [], kind: 'error', at: Date.now(), error: true });
@@ -144,6 +167,33 @@ export default function TabPage({ tab }: { tab: Tab }) {
     }
   }
 
+  // ── To-Do items ──
+  async function addTask(title: string) {
+    try {
+      const task = await tasksApi.addTask({ title, tab_id: tab.id });
+      setTasks(list => [...list, task]);
+    } catch (e) {
+      show({ text: `Couldn't add that (${e instanceof Error ? e.message : 'failed'}).`, logIds: [], kind: 'error', at: Date.now(), error: true });
+      throw e;
+    }
+  }
+  async function taskDone(task: tasksApi.Task) {
+    setTasks(list => list.filter(x => x.id !== task.id));
+    try {
+      await tasksApi.setDone(task.id, true);
+      show({ text: `Done: ${task.title}`, logIds: [], kind: 'task', at: Date.now(), undoFn: () => tasksApi.setDone(task.id, false) });
+    } catch { load(); }
+  }
+  async function taskEdit(task: tasksApi.Task, change: Partial<Pick<tasksApi.Task, 'title' | 'due_on'>>) {
+    setTasks(list => list.map(x => (x.id === task.id ? { ...x, ...change } : x)));
+    await tasksApi.updateTask(task.id, change).catch(() => load());
+  }
+  async function taskDelete(task: tasksApi.Task) {
+    if (!confirm(`Delete "${task.title}"?`)) return;
+    setTasks(list => list.filter(x => x.id !== task.id));
+    await tasksApi.deleteTask(task.id).catch(() => load());
+  }
+
   async function wake(t: TodoThread) {
     optimistic(t, { snoozed_until: null });
     await act.unsnooze(t).catch(() => load());
@@ -159,11 +209,10 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
   if (accounts.length === 0) {
     return (
-      <section className="caught-up" aria-label={tab.name}>
-        <div className="check" aria-hidden>✓</div>
-        <h2>All caught up.</h2>
+      <div className="stack-lg">
+        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} />
         <p className="muted small">No mail accounts on this tab yet.</p>
-      </section>
+      </div>
     );
   }
 
@@ -173,6 +222,8 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
   return (
     <div className="stack-lg">
+      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} />
+
       {lines.length === 0 ? (
         <section className="caught-up" aria-label={tab.name}>
           <div className="check" aria-hidden>✓</div>
@@ -262,7 +313,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
         <div className={toast.error ? 'toast error' : 'toast'} role="status">
           <span>{toast.text}</span>
           {toast.offer && <button onClick={confirmAlwaysIgnore}>Always ignore</button>}
-          {toast.logIds.length > 0 && <button onClick={undoToast}>Undo</button>}
+          {(toast.logIds.length > 0 || toast.undoFn) && <button onClick={undoToast}>Undo</button>}
           <button className="x" aria-label="Dismiss" onClick={() => setToast(null)}>×</button>
         </div>
       )}

@@ -4,10 +4,12 @@ import { accountLabel, type Account } from '../../lib/accounts';
 import { gmailUrl, opensInNewTab } from '../../lib/gmailOpen';
 import { ago, isResurfaced, isUrgent, type Line, type TodoThread } from '../../lib/todos';
 import { remindPresets } from '../../lib/actions';
+import AddTodo, { type NewTodo } from './AddTodo';
 
 export type RowAction =
   | { kind: 'done' | 'ignore'; thread: TodoThread }
-  | { kind: 'snooze'; thread: TodoThread; until: Date };
+  | { kind: 'snooze'; thread: TodoThread; until: Date }
+  | { kind: 'todo'; thread: TodoThread; todo: NewTodo };
 
 const senderName = (t: TodoThread) => t.from_name || t.from_email || 'Unknown sender';
 const SWIPE = 90; // px to commit a swipe
@@ -38,6 +40,7 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   t: TodoThread; acct?: Account; showAccount: boolean; onAction: (a: RowAction) => void;
 }) {
   const [remind, setRemind] = useState(false);
+  const [adding, setAdding] = useState(false);
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
   const href = acct ? gmailUrl(acct.email, t.thread_id, undefined, t.subject) : undefined;
@@ -87,9 +90,13 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
         <div className="actions">
           <button onClick={() => onAction({ kind: 'done', thread: t })}>Done</button>
           <button onClick={() => onAction({ kind: 'ignore', thread: t })}>Ignore</button>
-          <button onClick={() => setRemind(r => !r)} aria-expanded={remind}>Remind me</button>
+          <button onClick={() => { setAdding(a => !a); setRemind(false); }} aria-expanded={adding}>+ To-Do</button>
           {href && <a className="open" href={href} {...(opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Gmail ↗</a>}
         </div>
+        {adding && (
+          <AddTodo initialTitle={t.subject || t.summary || ''} onClose={() => setAdding(false)}
+                   onSave={todo => { setAdding(false); onAction({ kind: 'todo', thread: t, todo }); }} />
+        )}
         {remind && (
           <RemindMenu onClose={() => setRemind(false)}
                       onPick={until => { setRemind(false); onAction({ kind: 'snooze', thread: t, until }); }} />

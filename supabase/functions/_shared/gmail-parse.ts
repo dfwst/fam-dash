@@ -61,7 +61,7 @@ function clean(text: string): string {
     .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
 
-function messageText(m: GmailMessage): string {
+export function messageText(m: GmailMessage): string {
   const plain = findPart(m.payload, 'text/plain');
   if (plain) return clean(b64urlText(plain.body!.data!));
   const html = findPart(m.payload, 'text/html');

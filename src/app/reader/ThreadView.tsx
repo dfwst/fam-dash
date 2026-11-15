@@ -5,9 +5,12 @@ import { supabase } from '../../lib/supabase';
 import * as act from '../../lib/actions';
 import { gmailUrl, opensInNewTab } from '../../lib/gmailOpen';
 import EmailBody from './EmailBody';
+import ReplyBox from './ReplyBox';
+import AddTodo from '../todo/AddTodo';
+import { addTask } from '../../lib/tasks';
 
 // Read a conversation inside rlyfe. Nothing is marked read in Gmail by looking at it.
-// Done / Ignore / Remind me work here just like on the to-do list.
+// Done / Ignore / Remind me work here just like on the to-do list; Reply (M5) sends from here.
 
 type Msg = {
   id: string; from: { name: string; email: string }; to: string; cc: string; subject: string;
@@ -30,6 +33,16 @@ export default function ThreadView() {
   const [remind, setRemind] = useState(false);
   const [busy, setBusy] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
+  const [tabId, setTabId] = useState<string | null>(null);
+  const [replying, setReplying] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [note, setNote] = useState('');
+  const [version, setVersion] = useState(0); // bump to re-read the thread after a reply
+
+  useEffect(() => {
+    supabase.from('connected_accounts').select('default_tab_id').eq('id', accountId).maybeSingle()
+      .then(({ data }) => setTabId(data?.default_tab_id ?? null));
+  }, [accountId]);
 
   useEffect(() => {
     callFn<ThreadData>('thread-read', { accountId, threadId })
@@ -42,7 +55,7 @@ export default function ThreadView() {
       .catch(e => setError(e instanceof Error ? e.message : 'failed'));
     supabase.from('email_threads').select('summary').eq('account_id', accountId).eq('thread_id', threadId)
       .maybeSingle().then(({ data }) => setSummary(data?.summary ?? null));
-  }, [accountId, threadId]);
+  }, [accountId, threadId, version]);
 
   const ref = { account_id: accountId, thread_id: threadId };
 
@@ -105,11 +118,34 @@ export default function ThreadView() {
         })}
       </ol>
 
-      <div className="reader-actions">
-        <button disabled={busy} onClick={() => run(() => act.done(ref))}>Done</button>
-        <button disabled={busy} onClick={() => run(() => act.ignore(ref))}>Ignore</button>
-        <button disabled={busy} onClick={() => setRemind(r => !r)}>Remind me</button>
-      </div>
+      {note && <p className="notice" onClick={() => setNote('')}>{note}</p>}
+
+      {replying ? (
+        <ReplyBox accountId={accountId} threadId={threadId} onClose={() => setReplying(false)}
+                  onSent={r => {
+                    if (r.done) window.setTimeout(() => nav(-1), 1500);
+                    else window.setTimeout(() => { setReplying(false); setVersion(v => v + 1); }, 1500);
+                  }} />
+      ) : (
+        <div className="reader-actions">
+          <button className="primary" disabled={busy} onClick={() => { setReplying(true); setAdding(false); setRemind(false); }}>Reply</button>
+          <button disabled={busy} onClick={() => run(() => act.done(ref))}>Done</button>
+          <button disabled={busy} onClick={() => run(() => act.ignore(ref))}>Ignore</button>
+          <button disabled={busy} onClick={() => { setAdding(a => !a); setRemind(false); }}>+ To-Do</button>
+          <button disabled={busy} onClick={() => { setRemind(r => !r); setAdding(false); }}>Remind me</button>
+        </div>
+      )}
+      {adding && (
+        <div className="reader-remind"><AddTodo initialTitle={data.subject} onClose={() => setAdding(false)}
+                 onSave={async todo => {
+                   setAdding(false);
+                   try {
+                     await addTask({ title: todo.title, due_on: todo.due_on, tab_id: tabId, account_id: accountId, thread_id: threadId });
+                     if (todo.alsoDone) await run(() => act.done(ref));
+                     else setNote('Added to To-Do.');
+                   } catch (e) { setError(e instanceof Error ? e.message : 'failed'); }
+                 }} /></div>
+      )}
       {remind && (
         <div className="remind reader-remind">
           {act.remindPresets().map(p => (

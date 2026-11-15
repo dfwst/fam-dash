@@ -14,7 +14,7 @@ type Entry = {
 };
 
 const LABEL: Record<string, string> = {
-  archive: 'Archived', create_filter: 'Always ignore', snooze: 'Snoozed',
+  archive: 'Archived', create_filter: 'Always ignore', snooze: 'Snoozed', reply: 'Replied',
 };
 
 export default function Activity({ accounts }: { accounts: Map<string, Account> }) {
@@ -26,7 +26,7 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
   const load = useCallback(async () => {
     const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
     let q = supabase.from('action_log').select('*')
-      .in('action', ['archive', 'create_filter', 'snooze']).gte('created_at', since)
+      .in('action', ['archive', 'create_filter', 'snooze', 'reply']).gte('created_at', since)
       .order('created_at', { ascending: false }).limit(300);
     if (only === 'sync') q = q.eq('source', 'sync');
     const { data, error } = await q;
@@ -81,9 +81,11 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
                       {e.source === 'sync' ? ' · morning sync' : ''}
                     </div>
                   </div>
-                  <button className="pill" disabled={busy === e.id} onClick={() => doUndo(e)}>
-                    {busy === e.id ? '…' : e.source === 'sync' ? 'Put back' : 'Undo'}
-                  </button>
+                  {e.action !== 'reply' && (  // sent mail can't be un-sent
+                    <button className="pill" disabled={busy === e.id} onClick={() => doUndo(e)}>
+                      {busy === e.id ? '…' : e.source === 'sync' ? 'Put back' : 'Undo'}
+                    </button>
+                  )}
                 </li>
               );
             })}
