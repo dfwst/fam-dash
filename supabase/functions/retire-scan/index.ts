@@ -9,11 +9,11 @@ import { requireMember, type Ctx } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import {
-  classifyGroups, groupRows, imapStart, imapStep, ruleKind, scanMailbox,
+  classifyGroups, clip, groupRows, imapStart, imapStep, ruleKind, scanMailbox,
   type Group, type ImapScanState, type Kind, type Row,
 } from '../_shared/retire.ts';
 
-const BUDGET_MS = 100_000;
+const BUDGET_MS = 65_000;   // a step must answer within 150s; a slow Yahoo batch can add ~40s
 const AI_GROUPS = 480;
 type State = ImapScanState & { done: boolean; provider: string };
 type Acct = { id: string; email: string; provider: 'google' | 'microsoft' | 'imap'; retire_scan_state: State | null };
@@ -61,22 +61,23 @@ async function step(ctx: Ctx, acct: Acct, budgetEnd: number) {
   const state = acct.retire_scan_state;
   if (!state || state.done) return { read: state?.read ?? 0, total: state?.total ?? 0, done: true };
 
-  let rows: Row[];
-  let wroteTo = new Set(state.wroteTo);
   if (acct.provider === 'imap') {
-    rows = await imapStep(ctx.admin, acct.id, state, budgetEnd);
-    state.done = state.folders.every(f => f.done);
+    const wroteTo = new Set(state.wroteTo);
+    // Merge + save after every batch, so a crashed step loses at most what was in flight
+    await imapStep(ctx.admin, acct.id, state, budgetEnd, async (rows: Row[]) => {
+      if (rows.length) await merge(ctx, acct, groupRows(rows, wroteTo, acct.email));
+      await saveState(ctx.admin, acct.id, state);
+    });
+    state.done = state.folders.every(f => f.done) && !state.queue?.length && !state.pending?.length;
   } else {
     // Gmail / Microsoft: one budgeted pass (newest mail first)
     const scan = await scanMailbox(ctx.admin, acct, budgetEnd);
-    rows = scan.rows;
-    wroteTo = scan.wroteTo;
+    await merge(ctx, acct, groupRows(scan.rows, scan.wroteTo, acct.email));
     state.read = state.total = scan.rows.length;
     state.done = true;
   }
-  await merge(ctx, acct, groupRows(rows, wroteTo, acct.email));
   await saveState(ctx.admin, acct.id, state);
-  return { read: state.read, total: state.total, done: state.done };
+  return { read: state.read, total: state.total, done: state.done, skipped: state.skipped ?? 0 };
 }
 
 // Add this batch's counts into the checklist
@@ -97,8 +98,8 @@ async function merge(ctx: Ctx, acct: Acct, groups: Group[]) {
       };
       if (!e) {
         return {
-          ...base, name: (g.name || g.key).slice(0, 120), kind: ruleKind(g), reason: null,
-          message_count: g.count, first_seen: first, last_seen: last, samples: g.subjects.slice(0, 3).map(s => s.slice(0, 140)),
+          ...base, name: clip(g.name || g.key, 120), kind: ruleKind(g), reason: null,
+          message_count: g.count, first_seen: first, last_seen: last, samples: g.subjects.slice(0, 3).map(s => clip(s, 140)),
           sender: g.sender, unsubscribe: g.unsub ?? null, unsub_count: g.unsubCount, account_signals: g.accountSignals,
           wrote_to: g.wroteTo,
         };
@@ -108,12 +109,12 @@ async function merge(ctx: Ctx, acct: Acct, groups: Group[]) {
       return {
         ...base,
         kind: e.kind, reason: e.reason,
-        name: newer ? (g.name || e.name).slice(0, 120) : e.name,
+        name: newer ? clip(g.name || e.name, 120) : e.name,
         sender: newer ? g.sender : e.sender,
         message_count: e.message_count + g.count,
         first_seen: [e.first_seen, first].filter(Boolean).sort()[0] ?? null,
         last_seen: [e.last_seen, last].filter(Boolean).sort().pop() ?? null,
-        samples: (e.samples.length ? e.samples : g.subjects.slice(0, 3).map(s => s.slice(0, 140))),
+        samples: (e.samples.length ? e.samples : g.subjects.slice(0, 3).map(s => clip(s, 140))),
         unsubscribe: e.unsubscribe ?? g.unsub ?? null,
         unsub_count: e.unsub_count + g.unsubCount,
         account_signals: e.account_signals + g.accountSignals,
@@ -153,8 +154,8 @@ async function finish(ctx: Ctx, acct: Acct) {
     return {
       ...it,
       kind: (c?.kind as Kind | undefined) ?? ruleKind(g),
-      name: (c?.name || it.name).slice(0, 120),
-      reason: (c?.reason ?? (g.accountSignals ? 'account emails' : g.unsubCount ? 'mailing list' : '')).slice(0, 200),
+      name: clip(c?.name || it.name, 120),
+      reason: clip(c?.reason ?? (g.accountSignals ? 'account emails' : g.unsubCount ? 'mailing list' : ''), 200),
       updated_at: now,
     };
   });
@@ -162,6 +163,10 @@ async function finish(ctx: Ctx, acct: Acct) {
     const { error } = await ctx.admin.from('retire_items').upsert(updates.slice(i, i + 500), { onConflict: 'account_id,group_key' });
     if (error) throw error;
   }
+  // Senders this scan never saw (e.g. only in the spam folder, or older than 5 years) drop off —
+  // unless you've acted on them or they emailed the address after you started watching
+  await ctx.admin.from('retire_items').delete().eq('account_id', acct.id).eq('message_count', 0)
+    .eq('status', 'todo').eq('kind_by_you', false).is('flagged_at', null);
   await ctx.admin.from('connected_accounts').update({ retire_scanned_at: now, retire_scan_state: null }).eq('id', acct.id);
 
   const final = all.map(it => updates.find(u => u.id === it.id) ?? it);

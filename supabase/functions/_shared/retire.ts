@@ -24,6 +24,14 @@ export type ScanResult = { rows: Row[]; wroteTo: Set<string>; folders: number; p
 const YEARS = 5;
 const since = () => new Date(Date.now() - YEARS * 365 * 86_400_000);
 
+// Trim to n characters without splitting an emoji (half of one is invalid text and makes the
+// whole Claude request fail), and drop any broken half-characters already in the source.
+export function clip(s: string, n: number): string {
+  const clean = (s ?? '').replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+  const chars = Array.from(clean);
+  return chars.length > n ? chars.slice(0, n).join('') : clean;
+}
+
 export const PERSONAL_DOMAINS = new Set([
   'gmail.com', 'googlemail.com', 'yahoo.com', 'ymail.com', 'rocketmail.com', 'aol.com', 'outlook.com', 'hotmail.com',
   'live.com', 'msn.com', 'icloud.com', 'me.com', 'mac.com', 'att.net', 'sbcglobal.net', 'bellsouth.net', 'comcast.net',
@@ -67,13 +75,22 @@ export async function scanMailbox(
 
 // IMAP is scanned in resumable steps: big Yahoo folders (45k+) don't fit in one call, and
 // Yahoo's SEARCH silently returns nothing on large folders — so we read headers directly by
-// position, newest first, 2,000 at a time, and stop a folder once we're past the 5-year mark.
+// position, newest first, in batches, keeping only the last 5 years.
+//
+// Crash-proofing: progress is saved after every batch. Batches in flight are recorded in
+// `pending`; if a step dies (e.g. a message with a monstrous header blows the memory limit),
+// the next step re-reads those ranges in slices of 25, and a slice that kills it again is skipped.
+type Range = { path: string; start: number; end: number };
 export type ImapScanState = {
   folders: { path: string; total: number; next: number; done: boolean }[];
   wroteTo: string[];
   read: number;
   total: number;
+  pending?: Range[];
+  queue?: Range[];
+  skipped?: number;
 };
+const SLICE = 25;
 
 const BATCH = 500;   // Yahoo refuses much bigger header fetches ("Command failed")
 
@@ -82,10 +99,10 @@ export async function imapStart(admin: SupabaseClient, accountId: string): Promi
   try {
     const f = await findFolders(client);
     const list: { path: string; specialUse?: string; flags?: Set<string> }[] = await client.list();
-    const skip = new Set(['\Trash', '\Junk', '\Drafts', '\Sent', '\All']);
+    const skip = new Set(['\\Trash', '\\Junk', '\\Drafts', '\\Sent', '\\All']);
     const folders: ImapScanState['folders'] = [];
     for (const x of list) {
-      if (skip.has(x.specialUse ?? '') || x.flags?.has('\Noselect') || x.path === f.sent) continue;
+      if (skip.has(x.specialUse ?? '') || x.flags?.has('\\Noselect') || x.path === f.sent) continue;
       const st = await client.status(x.path, { messages: true }).catch(() => ({ messages: 0 }));
       if (st.messages > 0) folders.push({ path: x.path, total: st.messages, next: st.messages, done: false });
     }
@@ -107,58 +124,78 @@ export async function imapStart(admin: SupabaseClient, accountId: string): Promi
 
 const WORKERS = 3; // parallel IMAP connections per step (Yahoo allows a handful)
 
-export async function imapStep(admin: SupabaseClient, accountId: string, state: ImapScanState, budgetEnd: number): Promise<Row[]> {
-  const rows: Row[] = [];
+// onBatch(rows) is called after every finished batch (and with [] when one starts): the caller
+// merges the rows into the checklist and saves `state`, so a crash loses at most what was in flight.
+export async function imapStep(
+  admin: SupabaseClient, accountId: string, state: ImapScanState, budgetEnd: number,
+  onBatch: (rows: Row[]) => Promise<void>,
+): Promise<void> {
   const cutoff = since().getTime();
+  state.queue ??= [];
+  state.skipped ??= 0;
 
-  // Hand out the next batch: current folder, newest first (JS is single-threaded, so this is safe)
-  const claim = () => {
+  // The previous step died with these ranges in flight → retry them in slices; a slice that
+  // already failed at the smallest size is skipped for good
+  for (const p of state.pending ?? []) {
+    const size = p.end - p.start + 1;
+    if (size <= SLICE) {
+      state.skipped += size;
+      state.read += size;
+      console.error('retire scan: skipping unreadable messages', p.path, p.start, p.end);
+    } else {
+      for (let to = p.end; to >= p.start; to -= SLICE) state.queue.push({ path: p.path, start: Math.max(p.start, to - SLICE + 1), end: to });
+    }
+  }
+  state.pending = [];
+  const careful = state.queue.length > 0; // one connection while retrying suspect ranges
+
+  // Next range: retry queue first, then the current folder, newest first
+  const claim = (): Range | null => {
+    if (Date.now() >= budgetEnd) return null;
+    if (state.queue!.length) return state.queue!.shift()!;
+    if (careful) return null; // finish the retries in this step; normal batches resume next step
     const folder = state.folders.find(f => !f.done);
-    if (!folder || Date.now() >= budgetEnd) return null;
+    if (!folder) return null;
     const end = folder.next, start = Math.max(1, end - BATCH + 1);
     folder.next = start - 1;
     if (folder.next < 1) folder.done = true;
-    return { folder, start, end };
+    return { path: folder.path, start, end };
   };
+
+  // Serialize saves (several workers finish batches at once)
+  let saving = Promise.resolve();
+  const save = (rows: Row[]) => (saving = saving.then(() => onBatch(rows)));
 
   const worker = async () => {
     const client = await imapClientFor(admin, accountId);
     try {
       for (let job = claim(); job; job = claim()) {
-        const { folder, start, end } = job;
-        let newest = 0;
+        state.pending!.push(job);
+        await save([]); // record what's in flight before touching it
+        const rows: Row[] = [];
         // Envelope only (sender, subject, date): Yahoo serves it fast; asking for extra header
         // fields makes it open every message and crawl
-        const read = (from: number, to: number) => inFolder(client, folder.path, async () => {
-          for await (const m of client.fetch(`${from}:${to}`, { envelope: true })) {
+        await inFolder(client, job.path, async () => {
+          for await (const m of client.fetch(`${job.start}:${job.end}`, { envelope: true })) {
             const date = m.envelope?.date ? new Date(m.envelope.date).getTime() : 0;
-            newest = Math.max(newest, date);
             const sender = m.envelope?.from?.[0];
             if (!sender?.address || (date && date < cutoff)) continue;
             rows.push({ from: sender.address.toLowerCase(), name: sender.name ?? '', subject: m.envelope?.subject ?? '', date });
           }
-        });
-        try {
-          await read(start, end);
-        } catch {
-          // Retry in small slices; a slice that still fails is skipped (logged), not the whole folder
-          for (let to = end; to >= start; to -= 100) {
-            await read(Math.max(start, to - 99), to)
-              .catch(e => console.error('retire step slice failed', folder.path, to, e instanceof Error ? e.message : e));
-          }
-        }
+        }).catch(e => console.error('retire batch failed', job.path, job.start, job.end, e instanceof Error ? e.message : e));
         // Every message is read: folders filled by moving mail (e.g. a triage into Archive) are in
-        // moving order, not date order, so "this batch is old" says nothing about the next one.
-        state.read += end - start + 1;
-        void newest;
+        // moving order, not date order, so a batch of old mail says nothing about the next one.
+        state.pending = state.pending!.filter(p => p !== job);
+        state.read += job.end - job.start + 1;
+        await save(rows);
       }
     } finally {
       await client.logout().catch(() => {});
     }
   };
 
-  await Promise.all(Array.from({ length: WORKERS }, worker));
-  return rows;
+  await Promise.all(Array.from({ length: careful ? 1 : WORKERS }, worker));
+  await saving;
 }
 
 async function imapClientFor(admin: SupabaseClient, accountId: string) {
@@ -338,13 +375,18 @@ export async function classifyGroups(groups: Group[], address: string): Promise<
   const map = new Map<string, { name: string; kind: string; reason: string }>();
   let input = 0, output = 0;
   const day = (t: number) => (t ? new Date(t).toISOString().slice(0, 10) : '?');
-  for (let i = 0; i < groups.length; i += 120) {
-    const chunk = groups.slice(i, i + 120);
+  // 40 senders per request (120 overflowed the reply limit and the cut-off JSON was unusable),
+  // three requests at a time
+  const CHUNK = 40;
+  const chunks: Group[][] = [];
+  for (let i = 0; i < groups.length; i += CHUNK) chunks.push(groups.slice(i, i + CHUNK));
+
+  const one = async (chunk: Group[]) => {
     const lines = chunk.map(g =>
-      `${g.key} | from "${g.name}" <${g.sender}> | ${g.count} emails ${day(g.first)}..${day(g.last)} | unsubscribe-link:${g.unsubCount ? 'yes' : 'no'} | he wrote to them:${g.wroteTo ? 'yes' : 'no'} | subjects: ${g.subjects.slice(0, 4).map(s => s.slice(0, 70)).join(' ; ')}`);
+      `${g.key} | from "${clip(g.name, 80)}" <${g.sender}> | ${g.count} emails ${day(g.first)}..${day(g.last)} | unsubscribe-link:${g.unsubCount ? 'yes' : 'no'} | he wrote to them:${g.wroteTo ? 'yes' : 'no'} | subjects: ${g.subjects.slice(0, 4).map(s => clip(s, 70)).join(' ; ')}`);
     const res = await client.messages.create({
       model: MODEL,
-      max_tokens: 8000,
+      max_tokens: 16000,
       system: SYSTEM,
       messages: [{ role: 'user', content: `Address being retired: ${address}\n\n<groups>\n${lines.join('\n')}\n</groups>` }],
       output_config: { effort: 'low', format: { type: 'json_schema', schema: SCHEMA } },
@@ -352,11 +394,22 @@ export async function classifyGroups(groups: Group[], address: string): Promise<
     input += res.usage.input_tokens ?? 0;
     output += res.usage.output_tokens ?? 0;
     const text = res.content.find(b => b.type === 'text');
+    const raw = text && 'text' in text ? text.text : '';
     try {
-      const out = JSON.parse(text && 'text' in text ? text.text : '{"items":[]}') as { items: { key: string; name: string; kind: string; reason: string }[] };
-      for (const it of out.items) map.set(it.key, it);
-    } catch { /* fall back to rules for this chunk */ }
-  }
+      const out = JSON.parse(raw || '{"items":[]}') as { items: { key: string; name: string; kind: string; reason: string }[] };
+      // Claude may echo the key with different case / spacing — normalize both sides
+      for (const it of out.items) map.set(it.key.trim().toLowerCase(), it);
+      const missing = chunk.filter(g => !map.has(g.key)).length;
+      if (missing) console.error('retire classify: unmatched keys', missing, 'of', chunk.length, 'e.g.', out.items.slice(0, 2).map(i => i.key));
+    } catch (e) {
+      console.error('retire classify: bad reply', res.stop_reason, e instanceof Error ? e.message : e, raw.slice(0, 200));
+    }
+  };
+
+  let next = 0;
+  await Promise.all(Array.from({ length: 3 }, async () => {
+    while (next < chunks.length) await one(chunks[next++]).catch(e => console.error('retire classify chunk failed', e instanceof Error ? e.message : e));
+  }));
   return { map, cost: (input * PRICE.in + output * PRICE.out) / 1e6, input, output };
 }
 
@@ -377,7 +430,7 @@ export async function flagArrival(
     await admin.from('retire_items').update({
       flagged_at: now, last_seen: f.date.toISOString(), message_count: it.message_count + 1,
       status: it.status === 'skipped' ? 'skipped' : 'todo', done_at: null, updated_at: now,
-      samples: [f.subject.slice(0, 140)],
+      samples: [clip(f.subject, 140)],
     }).eq('id', it.id);
     return;
   }
@@ -387,8 +440,8 @@ export async function flagArrival(
   });
   await admin.from('retire_items').insert({
     household_id: acct.household_id, account_id: acct.id, group_key: key,
-    name: (f.fromName || key).slice(0, 120), kind, reason: 'emailed the old address after you started',
+    name: clip(f.fromName || key, 120), kind, reason: 'emailed the old address after you started',
     message_count: 1, first_seen: f.date.toISOString(), last_seen: f.date.toISOString(),
-    samples: [f.subject.slice(0, 140)], sender: f.fromEmail, flagged_at: now,
+    samples: [clip(f.subject, 140)], sender: f.fromEmail, flagged_at: now,
   });
 }
