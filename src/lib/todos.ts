@@ -21,10 +21,11 @@ export type TodoThread = {
   unread: boolean | null;
   in_inbox: boolean;
   snoozed_until: string | null;
+  acted: 'done' | 'ignored' | 'archived' | null; // done/ignored = you handled it; archived = morning cleanup
 };
 
 const COLS = 'account_id, thread_id, subject, from_name, from_email, summary, snippet, bucket, user_bucket, '
-  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until';
+  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until, acted';
 
 // Snoozed and the time has come → back at the top of the list
 export const isResurfaced = (t: TodoThread) => !!t.snoozed_until && Date.parse(t.snoozed_until) <= Date.now();
@@ -54,7 +55,9 @@ export async function loadTabThreads(accountIds: string[]) {
   // COLS is built by concatenation, so supabase-js can't infer the row type — assert it
   return {
     inbox: (inbox.data ?? []) as unknown as TodoThread[],
-    glance: (glance.data ?? []) as unknown as TodoThread[],
+    // Glance stays visible after the morning cleanup archives it ('archived'), but once
+    // YOU tap Done or Ignore it's handled — gone from the feed (Undo brings it back)
+    glance: ((glance.data ?? []) as unknown as TodoThread[]).filter(t => t.acted !== 'done' && t.acted !== 'ignored'),
   };
 }
 
