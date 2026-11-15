@@ -330,3 +330,4 @@ body { overflow-wrap: anywhere; }
 .field input, .connect-imap select { width: 100%; font: inherit; font-size: 16px; min-height: 40px; padding: 8px 10px; box-sizing: border-box;
   border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
 .connect-imap { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+.remove-acct { justify-self: start; align-self: flex-start; padding: 6px 0; margin-top: 4px; }

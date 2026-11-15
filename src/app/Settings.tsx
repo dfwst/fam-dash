@@ -30,13 +30,45 @@ export default function Settings() {
   const [error, setError] = useState('');
   const [imapFor, setImapFor] = useState<string | null>(null); // '' = new account, email = reconnect
   const [justConnected, setJustConnected] = useState('');
+  const [tabs, setTabs] = useState<{ id: string; name: string }[]>([]);
+  const [notice, setNotice] = useState('');
 
   const connected = params.get('connected') || justConnected;
   const urlError = params.get('error');
 
   useEffect(() => {
     loadAccounts().then(setAccounts).catch(e => setError(e.message));
+    supabase.from('tabs').select('id, name').eq('is_active', true).order('sort_order')
+      .then(({ data }) => setTabs(data ?? []));
   }, []);
+
+  // Which tab this account's mail shows on — takes effect right away, no re-sync needed
+  async function setTab(a: Account, tabId: string) {
+    if (tabId === a.default_tab_id) return;
+    setError('');
+    const { error } = await supabase.from('connected_accounts').update({ default_tab_id: tabId }).eq('id', a.id);
+    if (error) return setError(error.message);
+    const name = tabs.find(t => t.id === tabId)?.name ?? '';
+    setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, default_tab_id: tabId, tabs: { name } } : x)) ?? null);
+  }
+
+  async function remove(a: Account) {
+    if (!confirm(
+      `Remove ${a.email} from rlyfe?\n\n`
+      + 'rlyfe forgets its sign-in, its sorted emails and its history. Your mailbox itself is not touched — '
+      + 'nothing is deleted or moved there. To-Do items made from its emails stay.\n\n'
+      + 'You can connect it again any time (sorting starts fresh).')) return;
+    setError(''); setBusy(true);
+    try {
+      await callFn('account-remove', { accountId: a.id });
+      setAccounts(list => list?.filter(x => x.id !== a.id) ?? null);
+      setNotice(`Removed ${a.email}.`);
+    } catch (e) {
+      setError(`Couldn't remove it (${e instanceof Error ? e.message : 'failed'}).`);
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function setPolicy(a: Account, policy: Account['policy']) {
     if (policy === a.policy) return;
@@ -82,6 +114,7 @@ export default function Settings() {
       )}
       {urlError && <p className="error">{ERRORS[urlError] ?? `Connect failed (${urlError}).`}</p>}
       {error && <p className="error">{error}</p>}
+      {notice && <p className="notice" onClick={() => setNotice('')}>{notice}</p>}
 
       {!accounts ? (
         <p className="muted">Loading…</p>
@@ -93,8 +126,15 @@ export default function Settings() {
             <li key={a.id} className="row">
               <div className="row-main">
                 <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">{serviceName(a)} · {a.tabs?.name ?? 'No tab'}</div>
+                <div className="muted small">{serviceName(a)}</div>
                 <NicknameField account={a} onSave={n => setNickname(a, n)} />
+                <label className="policy">
+                  <span className="muted small">Shows on tab</span>
+                  <select value={a.default_tab_id ?? ''} onChange={e => setTab(a, e.target.value)}>
+                    {!a.default_tab_id && <option value="">— none —</option>}
+                    {tabs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
                 <label className="policy">
                   <span className="muted small">Morning cleanup</span>
                   <select value={a.policy} onChange={e => setPolicy(a, e.target.value as Account['policy'])}>
@@ -104,6 +144,7 @@ export default function Settings() {
                   </select>
                 </label>
                 <div className="muted small">{POLICY[a.policy].help}</div>
+                <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
               </div>
               {a.status === 'needs_reconnect' ? (
                 <button className="pill warn" disabled={busy} onClick={() => (a.provider === 'imap' ? setImapFor(a.email) : connect(a.provider, a.email))}>Reconnect</button>
