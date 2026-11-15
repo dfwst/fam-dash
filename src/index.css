@@ -326,3 +326,7 @@ body { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .ptr-icon.spin { animation: none; } }
 .connect-buttons { display: flex; flex-wrap: wrap; gap: 8px; }
 .connect-buttons button { flex: 1 1 200px; }
+.field { display: grid; gap: 4px; }
+.field input, .connect-imap select { width: 100%; font: inherit; font-size: 16px; min-height: 40px; padding: 8px 10px; box-sizing: border-box;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
+.connect-imap { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }

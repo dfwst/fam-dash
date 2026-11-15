@@ -96,6 +96,8 @@ export type Sender = { email: string; displayName: string; signatureHtml: string
 
 export function buildReply(
   t: GmailThread, from: Sender, to: string[], cc: string[], body: string,
+  // IMAP/SMTP only: Gmail's API stamps these itself; plain SMTP needs them from us
+  extra: { messageId?: string; date?: Date } = {},
 ): { raw: string; subject: string } {
   const base = replyBase(t, from.email);
   const first = t.messages[0];
@@ -129,6 +131,8 @@ export function buildReply(
   const boundary = `rlyfe_${crypto.randomUUID().replace(/-/g, '')}`;
   const fromHeader = from.displayName ? `${displayName(clean(from.displayName))} <${from.email}>` : from.email;
   const lines = [
+    ...(extra.date ? [`Date: ${extra.date.toUTCString().replace('GMT', '+0000')}`] : []),
+    ...(extra.messageId ? [`Message-ID: ${extra.messageId}`] : []),
     `From: ${fromHeader}`,
     `To: ${to.map(a => encodeAddress(clean(a))).join(', ')}`,
     ...(cc.length ? [`Cc: ${cc.map(a => encodeAddress(clean(a))).join(', ')}`] : []),

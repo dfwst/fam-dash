@@ -5,7 +5,7 @@ export type Recipients = { to: string[]; cc: string[] };
 type Ref = { accountId: string; threadId: string };
 
 export const prepare = (r: Ref) =>
-  callFn<{ from: string; reply: Recipients; replyAll: Recipients }>('thread-reply', { action: 'prepare', ...r });
+  callFn<{ from: string; provider: 'google' | 'microsoft' | 'imap'; reply: Recipients; replyAll: Recipients }>('thread-reply', { action: 'prepare', ...r });
 
 // Empty rough → Claude drafts from the email; otherwise Claude polishes your rough note
 export const draft = (r: Ref, rough: string) =>

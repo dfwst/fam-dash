@@ -3,7 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { callFn } from '../lib/functions';
 import { supabase } from '../lib/supabase';
 import GmailOpenTest from './GmailOpenTest';
-import { loadAccounts, type Account } from '../lib/accounts';
+import ConnectImap from './ConnectImap';
+import { loadAccounts, serviceName, type Account } from '../lib/accounts';
 
 const ERRORS: Record<string, string> = {
   access_denied: 'Google sign-in was cancelled.',
@@ -27,8 +28,10 @@ export default function Settings() {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [imapFor, setImapFor] = useState<string | null>(null); // '' = new account, email = reconnect
+  const [justConnected, setJustConnected] = useState('');
 
-  const connected = params.get('connected');
+  const connected = params.get('connected') || justConnected;
   const urlError = params.get('error');
 
   useEffect(() => {
@@ -90,7 +93,7 @@ export default function Settings() {
             <li key={a.id} className="row">
               <div className="row-main">
                 <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">{a.provider === 'microsoft' ? 'Microsoft' : 'Gmail'} · {a.tabs?.name ?? 'No tab'}</div>
+                <div className="muted small">{serviceName(a)} · {a.tabs?.name ?? 'No tab'}</div>
                 <NicknameField account={a} onSave={n => setNickname(a, n)} />
                 <label className="policy">
                   <span className="muted small">Morning cleanup</span>
@@ -103,7 +106,7 @@ export default function Settings() {
                 <div className="muted small">{POLICY[a.policy].help}</div>
               </div>
               {a.status === 'needs_reconnect' ? (
-                <button className="pill warn" disabled={busy} onClick={() => connect(a.provider, a.email)}>Reconnect</button>
+                <button className="pill warn" disabled={busy} onClick={() => (a.provider === 'imap' ? setImapFor(a.email) : connect(a.provider, a.email))}>Reconnect</button>
               ) : (
                 <span className="pill">Connected</span>
               )}
@@ -119,7 +122,18 @@ export default function Settings() {
         <button className="primary" disabled={busy} onClick={() => connect('microsoft')}>
           Connect Outlook / Microsoft 365
         </button>
+        <button className="primary" disabled={busy} onClick={() => setImapFor(f => (f === null ? '' : null))}>
+          Connect Yahoo, iCloud, AOL…
+        </button>
       </div>
+      {imapFor !== null && (
+        <ConnectImap initialEmail={imapFor || undefined} onCancel={() => setImapFor(null)}
+                     onDone={email => {
+                       setImapFor(null);
+                       setJustConnected(email);
+                       loadAccounts().then(setAccounts).catch(e => setError(e.message));
+                     }} />
+      )}
       <p className="muted small">
         rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
         Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.

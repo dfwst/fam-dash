@@ -129,7 +129,7 @@ export default function ReplyBox({ accountId, threadId, onSent, onClose }: {
           </button>
         )}
       </div>
-      {who && <p className="muted small">From {who.from} · your Gmail signature is added</p>}
+      {who && <p className="muted small">From {who.from}{who.provider === 'google' ? ' · your Gmail signature is added' : ''}</p>}
 
       {error && <p className="error">{error}</p>}
 

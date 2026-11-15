@@ -57,8 +57,9 @@ async function work(runId: string, chain: number) {
   if (!acct) return;
 
   const stats: Stats = { ...(run.stats ?? {}) };
+  let mb: Mailbox | null = null;
   try {
-    const mb = await openMailbox(admin, acct);
+    mb = await openMailbox(admin, acct);
     if (chain === 0) Object.assign(stats, await discover(admin, acct, mb));
 
     const remaining = await sortPending(admin, acct, mb, runId, started, stats);
@@ -73,6 +74,7 @@ async function work(runId: string, chain: number) {
       return;
     }
 
+    if (acct.provider === 'imap') await applyIgnoreRules(admin, acct, mb, runId, stats);
     await autoArchive(admin, acct, mb, runId, stats);
     await finalize(admin, acct, runId, stats, remaining);
   } catch (e) {
@@ -81,6 +83,8 @@ async function work(runId: string, chain: number) {
     await admin.from('sync_runs')
       .update({ status: 'error', error: msg, stats, finished_at: new Date().toISOString() })
       .eq('id', runId);
+  } finally {
+    await mb?.close?.();
   }
 }
 
@@ -289,6 +293,39 @@ async function autoArchive(admin: SupabaseClient, acct: Acct, mb: Mailbox, runId
     }
   });
   stats.archived = (stats.archived ?? 0) + archived;
+}
+
+// ── 4b. "Always ignore" for IMAP accounts ───────────────────────────
+// Gmail and Outlook keep a real filter/rule on the server. IMAP can't, so rlyfe does the
+// filter's job here: anything from an always-ignored sender leaves the inbox at each sync.
+async function applyIgnoreRules(admin: SupabaseClient, acct: Acct, mb: Mailbox, runId: string, stats: Stats) {
+  const { data: prefs } = await admin.from('sender_prefs')
+    .select('sender_email, gmail_filters').eq('household_id', acct.household_id).eq('always_ignore', true);
+  const senders = (prefs ?? [])
+    .filter(p => (p.gmail_filters as Record<string, string> | null)?.[acct.id])
+    .map(p => p.sender_email);
+  if (!senders.length) return;
+
+  const { data: rows } = await admin.from('email_threads')
+    .select('thread_id, unread, subject, from_name, from_email, user_bucket')
+    .eq('account_id', acct.id).eq('in_inbox', true).in('from_email', senders);
+  let n = 0;
+  for (const t of (rows ?? []).filter(r => r.user_bucket !== 3)) {
+    try {
+      await mb.archive(t.thread_id);
+      const now = new Date().toISOString();
+      await save(admin, acct.id, t.thread_id, { in_inbox: false, acted: 'ignored', acted_at: now, updated_at: now });
+      await admin.from('action_log').insert({
+        household_id: acct.household_id, account_id: acct.id, thread_id: t.thread_id,
+        action: 'archive', source: 'sync', reason: `Always ignore ${t.from_email}`,
+        payload: { was_unread: !!t.unread, subject: t.subject, from_name: t.from_name, from_email: t.from_email, run_id: runId },
+      });
+      n++;
+    } catch (e) {
+      console.error('ignore-rule archive failed', t.thread_id, e instanceof Error ? e.message : e);
+    }
+  }
+  stats.ignored_by_rule = (stats.ignored_by_rule ?? 0) + n;
 }
 
 // ── 5. finalize ─────────────────────────────────────────────────────

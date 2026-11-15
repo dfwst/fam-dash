@@ -3,7 +3,8 @@ import { supabase } from './supabase';
 export type Account = {
   id: string;
   email: string;
-  provider: 'google' | 'microsoft';
+  provider: 'google' | 'microsoft' | 'imap';
+  mail_service: 'yahoo' | 'aol' | 'icloud' | 'other' | null;
   policy: 'read_only' | 'junk_only' | 'full';
   status: 'active' | 'needs_reconnect' | 'disabled';
   default_tab_id: string | null;
@@ -11,12 +12,17 @@ export type Account = {
   tabs: { name: string } | null;
 };
 
+// "Gmail", "Microsoft", "Yahoo"… for Settings
+const SERVICE_NAME = { yahoo: 'Yahoo', aol: 'AOL', icloud: 'iCloud', other: 'IMAP' } as const;
+export const serviceName = (a: Pick<Account, 'provider' | 'mail_service'>) =>
+  a.provider === 'google' ? 'Gmail' : a.provider === 'microsoft' ? 'Microsoft' : SERVICE_NAME[a.mail_service ?? 'other'];
+
 export const accountLabel = (a: Account) => a.nickname || a.email.split('@')[0];
 
 export async function loadAccounts(tabId?: string): Promise<Account[]> {
   let q = supabase
     .from('connected_accounts')
-    .select('id, email, provider, policy, status, default_tab_id, nickname, tabs(name)')
+    .select('id, email, provider, mail_service, policy, status, default_tab_id, nickname, tabs(name)')
     .order('email');
   if (tabId) q = q.eq('default_tab_id', tabId);
   const { data, error } = await q;

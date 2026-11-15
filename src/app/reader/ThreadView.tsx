@@ -18,7 +18,7 @@ type Msg = {
   attachments: { name: string; size: number }[];
 };
 type ThreadData = {
-  threadId: string; account: string; provider: 'google' | 'microsoft'; webLink: string | null;
+  threadId: string; account: string; provider: 'google' | 'microsoft' | 'imap'; webLink: string | null;
   subject: string; messages: Msg[];
 };
 
@@ -81,7 +81,7 @@ export default function ThreadView() {
   if (!data) return <p className="muted">Loading email…</p>;
 
   const outlook = data.provider === 'microsoft';
-  const href = outlook ? data.webLink : gmailUrl(data.account, data.threadId, undefined, data.subject);
+  const href = data.provider === 'imap' ? null : outlook ? data.webLink : gmailUrl(data.account, data.threadId, undefined, data.subject);
 
   return (
     <section className="reader">

@@ -33,7 +33,7 @@ Deno.serve(async (req) => {
       case 'prepare': {
         const one = recipients(thread, acct.email, false);
         const all = recipients(thread, acct.email, true);
-        return json({ from: acct.email, reply: one, replyAll: all });
+        return json({ from: acct.email, provider: acct.provider, reply: one, replyAll: all });
       }
       case 'draft':
         return json(await draft(ctx, acct, thread, String(body.rough ?? '')));

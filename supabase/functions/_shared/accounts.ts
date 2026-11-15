@@ -7,7 +7,7 @@ import { MsError, msRefresh } from './microsoft.ts';
 
 export class NeedsReconnect extends Error {}
 
-export type Provider = 'google' | 'microsoft';
+export type Provider = 'google' | 'microsoft' | 'imap';
 
 export async function accessTokenFor(admin: SupabaseClient, accountId: string): Promise<string> {
   const [{ data: s, error }, { data: acct }] = await Promise.all([

@@ -9,7 +9,9 @@
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
 import { gmail, gmailRequest, modifyThread } from './google.ts';
 import { graph } from './microsoft.ts';
+import { imapMailbox, type ImapCreds } from './imap.ts';
 import { accessTokenFor, type Provider } from './accounts.ts';
+import { decrypt } from './crypto.ts';
 import { parseFrom, type GmailMessage, type GmailThread, type Part } from './gmail-parse.ts';
 import { buildReply, replyBase, type Sender } from './reply.ts';
 
@@ -31,16 +33,25 @@ export interface Mailbox {
   removeIgnoreRule(ruleId: string): Promise<void>;
   /** Reply in the same conversation, from this account */
   sendReply(t: MailThread, to: string[], cc: string[], text: string): Promise<{ id: string }>;
+  /** Close any open connection (IMAP); a no-op for web APIs */
+  close?(): Promise<void>;
 }
 
 export function isValidThreadId(provider: Provider, id: unknown): id is string {
   if (typeof id !== 'string') return false;
-  return provider === 'microsoft' ? /^[A-Za-z0-9+/=_-]{10,400}$/.test(id) : /^[0-9a-f]{6,32}$/i.test(id);
+  if (provider === 'microsoft') return /^[A-Za-z0-9+/=_-]{10,400}$/.test(id);
+  if (provider === 'imap') return /^[A-Za-z0-9_-]{4,600}$/.test(id); // base64url of the root Message-ID
+  return /^[0-9a-f]{6,32}$/i.test(id);
 }
 
 export type AccountRef = { id: string; email: string; provider: Provider };
 
 export async function openMailbox(admin: SupabaseClient, acct: AccountRef): Promise<Mailbox> {
+  if (acct.provider === 'imap') {
+    const { data: s } = await admin.from('account_secrets').select('refresh_token_enc').eq('account_id', acct.id).single();
+    const creds = JSON.parse(await decrypt(s!.refresh_token_enc)) as ImapCreds;
+    return imapMailbox(creds, acct.email);
+  }
   const token = await accessTokenFor(admin, acct.id);
   return acct.provider === 'microsoft' ? graphMailbox(token, acct.email) : gmailMailbox(token, acct.email);
 }

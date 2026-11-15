@@ -44,7 +44,9 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   const [dx, setDx] = useState(0);
   const start = useRef<{ x: number; y: number; id: number } | null>(null);
   const outlook = acct?.provider === 'microsoft';
-  const href = !acct ? undefined : outlook ? (t.web_link ?? undefined) : gmailUrl(acct.email, t.thread_id, undefined, t.subject);
+  // Yahoo/iCloud (IMAP) have no web link to one email — read it in rlyfe
+  const href = !acct || acct.provider === 'imap' ? undefined
+    : outlook ? (t.web_link ?? undefined) : gmailUrl(acct.email, t.thread_id, undefined, t.subject);
   const reader = threadPath(t.account_id, t.thread_id);
 
   // Phone gestures: swipe right = Done, swipe left = Remind me
