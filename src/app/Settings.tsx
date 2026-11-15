@@ -4,6 +4,7 @@ import { callFn } from '../lib/functions';
 import { supabase } from '../lib/supabase';
 import GmailOpenTest from './GmailOpenTest';
 import ConnectImap from './ConnectImap';
+import OldMailCleanup from './OldMailCleanup';
 import { loadAccounts, serviceName, type Account } from '../lib/accounts';
 
 const ERRORS: Record<string, string> = {
@@ -32,6 +33,7 @@ export default function Settings() {
   const [justConnected, setJustConnected] = useState('');
   const [tabs, setTabs] = useState<{ id: string; name: string }[]>([]);
   const [notice, setNotice] = useState('');
+  const [cleanupFor, setCleanupFor] = useState<string | null>(null);
 
   const connected = params.get('connected') || justConnected;
   const urlError = params.get('error');
@@ -144,6 +146,12 @@ export default function Settings() {
                   </select>
                 </label>
                 <div className="muted small">{POLICY[a.policy].help}</div>
+                {a.provider === 'imap' && (
+                  <button className="link small remove-acct" onClick={() => setCleanupFor(c => (c === a.id ? null : a.id))}>
+                    {cleanupFor === a.id ? 'Close cleanup' : 'Clean up old mail…'}
+                  </button>
+                )}
+                {cleanupFor === a.id && <OldMailCleanup accountId={a.id} email={a.email} />}
                 <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
               </div>
               {a.status === 'needs_reconnect' ? (

@@ -331,3 +331,8 @@ body { overflow-wrap: anywhere; }
   border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
 .connect-imap { border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .remove-acct { justify-self: start; align-self: flex-start; padding: 6px 0; margin-top: 4px; }
+.cleanup { display: grid; gap: 10px; padding: 12px; margin-top: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); min-width: 0; }
+.cleanup select { font: inherit; font-size: 16px; min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--text); }
+.cleanup .cleanup-preview p { margin: 0; }
+.cleanup-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; overflow-wrap: anywhere; }
+.cleanup-last { cursor: default; }

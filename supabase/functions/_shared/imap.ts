@@ -65,6 +65,23 @@ function rootOf(refs: string | undefined, inReplyTo: string | undefined, message
   return firstId(refs) ?? firstId(inReplyTo) ?? firstId(messageId) ?? fallback;
 }
 
+export type Folders = { inbox: string; archive: string; sent: string };
+
+// Inbox / Archive / Sent, by the server's special-use flags (falls back to common names).
+// Creates an Archive folder if the account has none.
+export async function findFolders(client: Client): Promise<Folders> {
+  const list: { path: string; specialUse?: string }[] = await client.list();
+  const find = (use: string, names: string[]) =>
+    list.find(f => f.specialUse === use)?.path ?? list.find(f => names.includes(f.path.toLowerCase()))?.path;
+  let archive = find('\\Archive', ['archive', 'archives']);
+  if (!archive) { await client.mailboxCreate('Archive'); archive = 'Archive'; }
+  return { inbox: 'INBOX', archive, sent: find('\\Sent', ['sent', 'sent messages', 'sent items']) ?? 'Sent' };
+}
+
+// A small inbox (e.g. after "clean up old mail") is read in full, not just the last 30 days,
+// so the old emails you kept still show up in rlyfe.
+const SMALL_INBOX = 300;
+
 // ── the mailbox ─────────────────────────────────────────────────────
 
 export function imapMailbox(c: ImapCreds, email: string): Mailbox {
@@ -84,15 +101,8 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
     idle = setTimeout(() => { client.logout().catch(() => {}); ready = null; }, 4000);
   };
 
-  let folderPaths: Promise<{ inbox: string; archive: string; sent: string }> | null = null;
-  const folders = () => folderPaths ??= (async () => {
-    const list: { path: string; specialUse?: string }[] = await client.list();
-    const find = (use: string, names: string[]) =>
-      list.find(f => f.specialUse === use)?.path ?? list.find(f => names.includes(f.path.toLowerCase()))?.path;
-    let archive = find('\\Archive', ['archive', 'archives']);
-    if (!archive) { await client.mailboxCreate('Archive'); archive = 'Archive'; }
-    return { inbox: 'INBOX', archive, sent: find('\\Sent', ['sent', 'sent messages', 'sent items']) ?? 'Sent' };
-  })();
+  let folderPaths: Promise<Folders> | null = null;
+  const folders = () => folderPaths ??= findFolders(client);
 
   async function inFolder<T>(path: string, fn: () => Promise<T>): Promise<T> {
     const lock = await client.getMailboxLock(path);
@@ -128,9 +138,16 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
     for (const k of [...index.keys()]) if (paths.some(p => k.startsWith(`${p}|`))) index.delete(k);
   };
 
+  // How far back to look in the inbox: everything if it's small, else the usual window
+  let inboxDaysP: Promise<number> | null = null;
+  const inboxDays = () => inboxDaysP ??= client.status('INBOX', { messages: true })
+    .then((s: { messages?: number }) => ((s.messages ?? Infinity) <= SMALL_INBOX ? 3650 : LOOKBACK_DAYS))
+    .catch(() => LOOKBACK_DAYS);
+
   // Every recent message in one folder that belongs to the conversation
   async function uidsFor(path: string, root: string): Promise<number[]> {
-    return (await indexFolder(path)).filter(r => r.root === root).map(r => r.uid);
+    const days = path === 'INBOX' ? await inboxDays() : LOOKBACK_DAYS;
+    return (await indexFolder(path, days)).filter(r => r.root === root).map(r => r.uid);
   }
 
   const done = <T>(p: Promise<T>) => p.finally(rest);
@@ -142,6 +159,7 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
 
     listInbox: (days) => done((async () => {
       await open();
+      if ((await inboxDays()) > LOOKBACK_DAYS) days = 3650; // small inbox → all of it
       const byRoot = new Map<string, string[]>();
       for (const r of await indexFolder('INBOX', Math.max(days, LOOKBACK_DAYS))) {
         byRoot.set(r.root, [...(byRoot.get(r.root) ?? []), `${r.uid}${r.seen ? 's' : 'u'}`]);
