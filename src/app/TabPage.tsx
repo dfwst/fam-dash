@@ -7,6 +7,7 @@ import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
 import TaskList from './todo/TaskList';
 import * as tasksApi from '../lib/tasks';
+import { useOnRefresh } from '../lib/refresh';
 
 // One tab's calm view:
 //   - To-do: Real mail someone is waiting on you for. Top 5 lines, the rest behind "N more".
@@ -62,6 +63,8 @@ export default function TabPage({ tab }: { tab: Tab }) {
     document.addEventListener('visibilitychange', onFocus);
     return () => document.removeEventListener('visibilitychange', onFocus);
   }, [load]);
+
+  useOnRefresh(load); // pull down → fresh list, without the "Loading…" flash
 
   const show = (t: Toast) => {
     setToast(t);

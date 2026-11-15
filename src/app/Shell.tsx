@@ -6,6 +6,8 @@ import Settings from './Settings';
 import Review from './Review';
 import Logo from './Logo';
 import ThreadView from './reader/ThreadView';
+import { usePullToRefresh } from '../lib/usePullToRefresh';
+import { REFRESH_EVENT, type RefreshDetail } from '../lib/refresh';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 
@@ -13,6 +15,16 @@ export default function Shell() {
   const [tabs, setTabs] = useState<Tab[] | null>(null);
   const [error, setError] = useState('');
   const [urgentTabs, setUrgentTabs] = useState<Set<string>>(new Set());
+  const [remount, setRemount] = useState(0);
+
+  // Pull down to refresh: the page on screen reloads its own data if it knows how
+  // (keeps your place); otherwise it's opened fresh.
+  const { pull, refreshing, ready } = usePullToRefresh(async () => {
+    const detail: RefreshDetail = { waits: [] };
+    window.dispatchEvent(new CustomEvent(REFRESH_EVENT, { detail }));
+    if (detail.waits.length) await Promise.allSettled(detail.waits);
+    else setRemount(k => k + 1);
+  });
 
   // The only "badge" in the app: a small red dot on a tab holding a declined
   // payment or security alert. Nothing else gets a counter.
@@ -29,8 +41,13 @@ export default function Shell() {
       });
     check();
     const onFocus = () => document.visibilityState === 'visible' && check();
+    const onRefresh = () => { check(); };
     document.addEventListener('visibilitychange', onFocus);
-    return () => document.removeEventListener('visibilitychange', onFocus);
+    window.addEventListener(REFRESH_EVENT, onRefresh);
+    return () => {
+      document.removeEventListener('visibilitychange', onFocus);
+      window.removeEventListener(REFRESH_EVENT, onRefresh);
+    };
   }, []);
 
   useEffect(() => {
@@ -49,6 +66,13 @@ export default function Shell() {
 
   return (
     <div className="shell">
+      {(pull > 0 || refreshing) && (
+        <div className="ptr" style={{ height: pull }} aria-live="polite">
+          <span className={refreshing ? 'ptr-icon spin' : 'ptr-icon'}
+                style={refreshing ? undefined : { transform: `rotate(${pull * 3}deg)`, opacity: Math.min(1, pull / 60) }}>↻</span>
+          <span className="ptr-text">{refreshing ? 'Refreshing…' : ready ? 'Release to refresh' : 'Pull to refresh'}</span>
+        </div>
+      )}
       <header className="topbar">
         <NavLink to="/" className="brand" aria-label="rlyfe home"><Logo height={22} /></NavLink>
         <div className="topbar-actions">
@@ -74,7 +98,7 @@ export default function Shell() {
         {tabs.length === 0 ? (
           <p className="center muted">No tabs to show yet.</p>
         ) : (
-          <Routes>
+          <Routes key={remount}>
             <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
             <Route path="/settings" element={<Settings />} />

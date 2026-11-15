@@ -316,3 +316,11 @@ body { overflow-wrap: anywhere; }
 .policy input { font: inherit; font-size: 16px; width: 9.5em; min-width: 0; color: var(--text); background: var(--bg);
   border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 36px; }
 .nick-state { color: var(--accent); }
+
+/* Pull to refresh */
+.ptr { display: flex; align-items: center; justify-content: center; gap: 8px; overflow: hidden;
+  color: var(--muted); font-size: .85rem; transition: height .15s ease-out; }
+.ptr-icon { font-size: 1.3rem; color: var(--accent); display: inline-block; }
+.ptr-icon.spin { animation: ptr-spin .8s linear infinite; }
+@keyframes ptr-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .ptr-icon.spin { animation: none; } }
