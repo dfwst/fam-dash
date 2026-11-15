@@ -20,7 +20,7 @@ const SECTIONS: { kind: Kind; title: string; help: string; doneLabel: string }[]
   { kind: 'update', title: 'Change your email here', help: 'Accounts tied to this address. Log in to each and switch to your new email.', doneLabel: 'Updated' },
   { kind: 'person', title: 'Tell these people', help: 'Real people who email this address.', doneLabel: 'Told them' },
   { kind: 'unsubscribe', title: 'Just unsubscribe', help: 'Mailing lists with no account — unsubscribe, or simply let them go.', doneLabel: 'Done' },
-  { kind: 'ignore', title: 'Nothing to do', help: 'Old one-offs and services that will stop on their own.', doneLabel: 'OK' },
+  { kind: 'ignore', title: 'Nothing to do', help: 'Old one-offs, spam, and likely phishing — never update your email at these.', doneLabel: 'OK' },
 ];
 const KIND_NAME: Record<Kind, string> = { update: 'Change email', person: 'Tell them', unsubscribe: 'Unsubscribe', ignore: 'Nothing to do' };
 
@@ -180,6 +180,7 @@ function Row({ it, label, onStatus, onKind }: {
     <li className={`retire-item ${it.status !== 'todo' ? 'finished' : ''}`}>
       <div className="retire-top">
         <span className="retire-name">{it.name}</span>
+        {/^likely phishing/i.test(it.reason ?? '') && <span className="badge urgent">Phishing</span>}
         {it.flagged_at && it.status === 'todo' && <span className="badge back">New mail</span>}
         <span className="todo-meta">{it.message_count} · last {when(it.last_seen)}</span>
       </div>
