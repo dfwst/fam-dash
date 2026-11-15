@@ -42,14 +42,24 @@ export default function Retire() {
   const [showDone, setShowDone] = useState(false);
   const [open, setOpen] = useState<Set<Kind>>(new Set(['update', 'person']));
 
+  const [loadError, setLoadError] = useState('');
   const load = useCallback(async () => {
-    const [{ data: a }, { data: it }] = await Promise.all([
-      supabase.from('connected_accounts').select('id, email, nickname, retiring, retire_scanned_at').eq('id', accountId).maybeSingle(),
-      supabase.from('retire_items').select('*').eq('account_id', accountId)
-        .order('flagged_at', { ascending: false, nullsFirst: false }).order('last_seen', { ascending: false }),
-    ]);
-    setAcct(a as Acct | null);
-    setItems((it ?? []) as Item[]);
+    setLoadError('');
+    // Never sit on "Loading…" forever: give up after 15s and offer Try again
+    const timeout = new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timed out')), 15_000));
+    try {
+      const [{ data: a, error: e1 }, { data: it, error: e2 }] = await Promise.race([Promise.all([
+        supabase.from('connected_accounts').select('id, email, nickname, retiring, retire_scanned_at').eq('id', accountId).maybeSingle(),
+        supabase.from('retire_items').select('*').eq('account_id', accountId)
+          .order('flagged_at', { ascending: false, nullsFirst: false }).order('last_seen', { ascending: false }),
+      ]), timeout]);
+      if (e1 || e2) throw e1 ?? e2;
+      if (!a) throw new Error('account not found');
+      setAcct(a as Acct);
+      setItems((it ?? []) as Item[]);
+    } catch (e) {
+      setLoadError(e instanceof Error ? e.message : 'failed');
+    }
   }, [accountId]);
   useEffect(() => { load(); }, [load]);
 
@@ -95,6 +105,16 @@ export default function Retire() {
   const updates = (items ?? []).filter(i => i.kind === 'update');
   const doneUpdates = updates.filter(i => i.status !== 'todo').length;
 
+  if (loadError) {
+    return (
+      <section className="stack">
+        <Link className="link back" to="/settings">← Settings</Link>
+        <p className="error">Couldn’t load this page ({loadError}).</p>
+        <button onClick={load}>Try again</button>
+        <p className="muted small">If it keeps happening on your phone, close rlyfe completely and open it again.</p>
+      </section>
+    );
+  }
   if (!acct || !items) return <p className="muted">Loading…</p>;
 
   return (
