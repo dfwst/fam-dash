@@ -336,3 +336,17 @@ body { overflow-wrap: anywhere; }
 .cleanup .cleanup-preview p { margin: 0; }
 .cleanup-list { margin: 6px 0 0; padding-left: 18px; display: grid; gap: 3px; overflow-wrap: anywhere; }
 .cleanup-last { cursor: default; }
+
+/* Retire this address */
+.retire h2 { overflow-wrap: anywhere; }
+.retire-progress { display: grid; gap: 4px; }
+.retire-progress .bar { height: 8px; border-radius: 99px; background: var(--line); overflow: hidden; }
+.retire-progress .bar span { display: block; height: 100%; background: var(--accent); transition: width .3s; }
+.retire-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.retire-item { border: 1px solid var(--line); border-radius: 12px; background: var(--surface); padding: 10px 12px 4px; min-width: 0; }
+.retire-item.finished { opacity: .55; }
+.retire-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.retire-name { font-weight: 600; flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.retire-sample { color: var(--muted); font-style: italic; }
+.retire-item .actions { padding-left: 0; flex-wrap: wrap; }
+.retire-kind { font: inherit; font-size: .85rem; margin-left: auto; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }

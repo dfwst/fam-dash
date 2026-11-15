@@ -22,6 +22,7 @@ import { openMailbox, type Mailbox } from '../_shared/mailbox.ts';
 import { threadFacts } from '../_shared/gmail-parse.ts';
 import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
 import { classifyWithClaude, type Correction } from '../_shared/classify.ts';
+import { flagArrival } from '../_shared/retire.ts';
 
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SELF = `${SB_URL}/functions/v1/sync-account`;
@@ -31,7 +32,10 @@ const CONCURRENCY = 3; // per-mailbox rate limits; both providers' helpers also 
 const MAX_CHAIN = 40;
 const MAX_ATTEMPTS = 3;
 
-type Acct = { id: string; email: string; provider: Provider; policy: string; ai_context: string | null; household_id: string };
+type Acct = {
+  id: string; email: string; provider: Provider; policy: string; ai_context: string | null; household_id: string;
+  retiring: boolean; retire_scanned_at: string | null;
+};
 type Stats = Record<string, number>;
 
 declare const EdgeRuntime: { waitUntil(p: Promise<unknown>): void };
@@ -53,7 +57,7 @@ async function work(runId: string, chain: number) {
   if (!run || run.status !== 'running') return;
 
   const { data: acct } = await admin.from('connected_accounts')
-    .select('id, email, provider, policy, ai_context, household_id').eq('id', run.account_id).single<Acct>();
+    .select('id, email, provider, policy, ai_context, household_id, retiring, retire_scanned_at').eq('id', run.account_id).single<Acct>();
   if (!acct) return;
 
   const stats: Stats = { ...(run.stats ?? {}) };
@@ -175,6 +179,12 @@ async function sortPending(
           labels: f.labels, has_unsubscribe: f.hasUnsubscribe,
           status: 'classified', attempts: 0, last_error: null, updated_at: new Date().toISOString(),
         };
+
+        // Retiring this address: new mail from anyone goes on (or back on) the checklist
+        if (acct.retiring && !f.lastFromMe && row.last_message_id !== f.lastMessageId
+            && f.date.getTime() > Date.parse(acct.retire_scanned_at ?? '1970-01-01')) {
+          await flagArrival(admin, acct, f).catch(e => console.error('retire flag failed', e instanceof Error ? e.message : e));
+        }
 
         // Only read/label changes since last sort → refresh the details, keep the sort (no AI cost)
         if (row.bucket != null && row.last_message_id === f.lastMessageId) {

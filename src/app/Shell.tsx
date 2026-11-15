@@ -6,6 +6,7 @@ import Settings from './Settings';
 import Review from './Review';
 import Logo from './Logo';
 import ThreadView from './reader/ThreadView';
+import Retire from './Retire';
 import { usePullToRefresh } from '../lib/usePullToRefresh';
 import { REFRESH_EVENT, type RefreshDetail } from '../lib/refresh';
 
@@ -104,6 +105,7 @@ export default function Shell() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/review" element={<Review />} />
             <Route path="/t/:accountId/:threadId" element={<ThreadView />} />
+            <Route path="/retire/:accountId" element={<Retire />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}

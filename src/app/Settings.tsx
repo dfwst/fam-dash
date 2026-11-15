@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { callFn } from '../lib/functions';
 import { supabase } from '../lib/supabase';
 import GmailOpenTest from './GmailOpenTest';
@@ -152,6 +152,7 @@ export default function Settings() {
                   </button>
                 )}
                 {cleanupFor === a.id && <OldMailCleanup accountId={a.id} email={a.email} />}
+                <Link className="link small remove-acct" to={`/retire/${a.id}`}>Retire this address…</Link>
                 <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
               </div>
               {a.status === 'needs_reconnect' ? (
