@@ -7,8 +7,9 @@ type Ref = { accountId: string; threadId: string };
 export const prepare = (r: Ref) =>
   callFn<{ from: string; reply: Recipients; replyAll: Recipients }>('thread-reply', { action: 'prepare', ...r });
 
-export const draft = (r: Ref, instruction: string) =>
-  callFn<{ body: string; cost: number }>('thread-reply', { action: 'draft', ...r, instruction });
+// Empty rough → Claude drafts from the email; otherwise Claude polishes your rough note
+export const draft = (r: Ref, rough: string) =>
+  callFn<{ body: string; cost: number }>('thread-reply', { action: 'draft', ...r, rough });
 
 type Sent = { sent: string; to: string[]; cc: string[]; logId: number | null };
 

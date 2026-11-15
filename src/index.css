@@ -308,7 +308,7 @@ body { overflow-wrap: anywhere; }
 .reply-text { width: 100%; min-height: 110px; resize: vertical; font: inherit; font-size: 16px; line-height: 1.45; padding: 10px 12px;
   border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); box-sizing: border-box; }
 .reply-claude { display: flex; gap: 8px; flex-wrap: wrap; }
-.reply-claude input { flex: 1 1 180px; min-width: 0; }
+.reply-claude { align-items: center; }
 .reply-claude button { white-space: nowrap; }
 .toast.inline { position: static; transform: none; margin: 0; width: auto; }
 .warn-note { margin: 0; padding: 8px 12px; border-radius: 10px; background: rgba(178,106,0,.12); color: #8a5300; }

@@ -1,7 +1,8 @@
 // POST (signed in, 2FA) — reply to an email from inside rlyfe.
 //
 //   { action: 'prepare', accountId, threadId }            who a Reply / Reply all would go to
-//   { action: 'draft',   accountId, threadId, instruction } Claude writes a first pass (never sends)
+//   { action: 'draft',   accountId, threadId, rough }   Claude drafts (rough empty) or polishes
+//                                                        your rough note — never sends
 //   { action: 'send',    accountId, threadId, body, replyAll, done }
 //        sends from the account that got the email, in the same conversation;
 //        done=true also archives it (with an Undo, like the Done button)
@@ -36,7 +37,7 @@ Deno.serve(async (req) => {
         return json({ from: acct.email, reply: one, replyAll: all });
       }
       case 'draft':
-        return json(await draft(ctx, acct, thread, String(body.instruction ?? '')));
+        return json(await draft(ctx, acct, thread, String(body.rough ?? '')));
       case 'send':
         return json(await send(ctx, acct, token, thread, String(body.body ?? ''), !!body.replyAll, !!body.done));
       default:
@@ -60,10 +61,10 @@ async function loadAccount(ctx: Ctx, accountId: unknown, threadId: unknown): Pro
   return data;
 }
 
-async function draft(ctx: Ctx, acct: Acct, thread: GmailThread, instruction: string) {
-  const r = await draftReply(thread, acct.email, acct.ai_context, instruction);
+async function draft(ctx: Ctx, acct: Acct, thread: GmailThread, rough: string) {
+  const r = await draftReply(thread, acct.email, acct.ai_context, rough);
   await ctx.admin.from('ai_usage').insert({
-    household_id: ctx.householdId, account_id: acct.id, thread_id: thread.id, purpose: 'draft_reply',
+    household_id: ctx.householdId, account_id: acct.id, thread_id: thread.id, purpose: rough.trim() ? 'polish_reply' : 'draft_reply',
     model: DRAFT_MODEL, input_tokens: r.usage.input, output_tokens: r.usage.output, cost_usd: r.cost,
   });
   if (!r.text) throw new Refused('no-draft');

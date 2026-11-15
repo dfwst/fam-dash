@@ -19,7 +19,7 @@ export default function ReplyBox({ accountId, threadId, onSent, onClose }: {
   const [who, setWho] = useState<Awaited<ReturnType<typeof reply.prepare>> | null>(null);
   const [all, setAll] = useState(false);
   const [body, setBody] = useState(() => reply.loadDraft(ref));
-  const [note, setNote] = useState('');
+  const [before, setBefore] = useState<string | null>(null); // your text before Claude touched it
   const [drafting, setDrafting] = useState(false);
   const [error, setError] = useState('');
   const [phase, setPhase] = useState<Phase>({ kind: 'edit' });
@@ -44,10 +44,12 @@ export default function ReplyBox({ accountId, threadId, onSent, onClose }: {
 
   const edit = (text: string) => { setBody(text); reply.saveDraft(ref, text); };
 
+  // Empty box → Claude drafts. Your rough note → Claude polishes it. Either way you can go back.
   async function askClaude() {
     setDrafting(true); setError('');
     try {
-      const d = await reply.draft(ref, note);
+      const d = await reply.draft(ref, body);
+      setBefore(body);
       edit(d.body);
       box.current?.focus();
     } catch (e) {
@@ -114,17 +116,20 @@ export default function ReplyBox({ accountId, threadId, onSent, onClose }: {
         </p>
       )}
 
-      <textarea ref={box} className="reply-text" value={body} disabled={locked} rows={4}
-                placeholder="Write your reply…" onChange={e => edit(e.target.value)} />
-      {who && <p className="muted small">From {who.from} · your Gmail signature is added</p>}
+      <textarea ref={box} className="reply-text" value={body} disabled={locked || drafting} rows={4}
+                placeholder="Write your reply — or jot a rough note and tap Polish" onChange={e => edit(e.target.value)} />
 
       <div className="reply-claude">
-        <input value={note} disabled={locked || drafting} onChange={e => setNote(e.target.value)}
-               placeholder="Tell Claude what to say (optional)" aria-label="What Claude should say" />
         <button disabled={locked || drafting} onClick={askClaude}>
-          {drafting ? 'Drafting…' : body.trim() ? 'Redraft with Claude' : 'Draft with Claude'}
+          {drafting ? (body.trim() ? 'Polishing…' : 'Drafting…') : body.trim() ? '✨ Polish with Claude' : '✨ Draft with Claude'}
         </button>
+        {before !== null && !drafting && !locked && (
+          <button className="link small" onClick={() => { edit(before); setBefore(null); }}>
+            {before.trim() ? 'Undo polish' : 'Clear draft'}
+          </button>
+        )}
       </div>
+      {who && <p className="muted small">From {who.from} · your Gmail signature is added</p>}
 
       {error && <p className="error">{error}</p>}
 
