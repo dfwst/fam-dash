@@ -215,7 +215,9 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
                   { name: 'Subject', value: p.subject ?? '' },
                   { name: 'Message-ID', value: p.messageId ?? '' },
                   { name: 'References', value: [p.references].flat().filter(Boolean).join(' ') },
-                  { name: 'List-Unsubscribe', value: header('list-unsubscribe') },
+                  // raw lines: mailparser turns List-* headers into objects, not text
+                  { name: 'List-Unsubscribe', value: rawHeader(p, 'list-unsubscribe') },
+                  { name: 'List-Unsubscribe-Post', value: rawHeader(p, 'list-unsubscribe-post') },
                 ],
               },
             });
@@ -269,6 +271,26 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
     addIgnoreRule: async (sender) => `rlyfe:${sender}`,
     removeIgnoreRule: async () => {},
 
+    // One message's unsubscribe headers, by { path, uid } (from the retire scan)
+    messageUnsubHeaders: (ref) => done((async () => {
+      await open();
+      const { path, uid } = ref as { path: string; uid: number };
+      let text = '';
+      await inFolder(path, async () => {
+        for await (const m of client.fetch([uid], { uid: true, headers: ['list-unsubscribe', 'list-unsubscribe-post'] }, { uid: true })) {
+          text = m.headers ? new TextDecoder().decode(m.headers) : '';
+        }
+      });
+      const unfold = text.replace(/\r?\n[ \t]+/g, ' ');
+      const get = (n: string) => unfold.match(new RegExp(`^${n}:\\s*(.*)$`, 'im'))?.[1]?.trim();
+      return { listUnsub: get('list-unsubscribe'), listUnsubPost: get('list-unsubscribe-post') };
+    })()),
+
+    // A short plain email (used for "mailto:" unsubscribes)
+    sendNew: (to, subject, text) => done((async () => {
+      await newSmtp(c).sendMail({ from: email, to, subject, text });
+    })()),
+
     sendReply: (t, to, cc, text) => done((async () => {
       await open();
       const domain = me.split('@')[1] || 'rlyfe.app';
@@ -288,6 +310,13 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
       return { id: messageId };
     })()),
   };
+}
+
+// A header exactly as written (unfolded), from mailparser's raw header lines
+// deno-lint-ignore no-explicit-any
+function rawHeader(p: any, name: string): string {
+  const line: string = p.headerLines?.find((h: { key: string }) => h.key === name)?.line ?? '';
+  return line.replace(/^[^:]+:\s*/, '').replace(/\r?\n[ \t]+/g, ' ').trim();
 }
 
 // Sign-in check used when connecting: IMAP login + SMTP login, nothing else

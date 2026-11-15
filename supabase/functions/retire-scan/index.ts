@@ -86,7 +86,7 @@ async function merge(ctx: Ctx, acct: Acct, groups: Group[]) {
   for (let i = 0; i < groups.length; i += 200) {
     const chunk = groups.slice(i, i + 200);
     const { data: existing } = await ctx.admin.from('retire_items')
-      .select('group_key, kind, reason, message_count, first_seen, last_seen, samples, unsub_count, account_signals, wrote_to, unsubscribe, name, sender')
+      .select('group_key, kind, reason, message_count, first_seen, last_seen, samples, unsub_count, account_signals, wrote_to, unsubscribe, name, sender, sample_ref')
       .eq('account_id', acct.id).in('group_key', chunk.map(g => g.key));
     const known = new Map((existing ?? []).map(e => [e.group_key, e]));
     const rows = chunk.map(g => {
@@ -101,7 +101,7 @@ async function merge(ctx: Ctx, acct: Acct, groups: Group[]) {
           ...base, name: clip(g.name || g.key, 120), kind: ruleKind(g), reason: null,
           message_count: g.count, first_seen: first, last_seen: last, samples: g.subjects.slice(0, 3).map(s => clip(s, 140)),
           sender: g.sender, unsubscribe: g.unsub ?? null, unsub_count: g.unsubCount, account_signals: g.accountSignals,
-          wrote_to: g.wroteTo,
+          wrote_to: g.wroteTo, sample_ref: g.ref ?? null,
         };
       }
       const newer = last && (!e.last_seen || last > e.last_seen);
@@ -119,6 +119,7 @@ async function merge(ctx: Ctx, acct: Acct, groups: Group[]) {
         unsub_count: e.unsub_count + g.unsubCount,
         account_signals: e.account_signals + g.accountSignals,
         wrote_to: e.wrote_to || g.wroteTo,
+        sample_ref: (newer && g.ref) ? g.ref : (e.sample_ref ?? g.ref ?? null),
       };
     });
     const { error } = await ctx.admin.from('retire_items').upsert(rows, { onConflict: 'account_id,group_key' });

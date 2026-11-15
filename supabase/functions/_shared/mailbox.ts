@@ -33,6 +33,10 @@ export interface Mailbox {
   removeIgnoreRule(ruleId: string): Promise<void>;
   /** Reply in the same conversation, from this account */
   sendReply(t: MailThread, to: string[], cc: string[], text: string): Promise<{ id: string }>;
+  /** One message's List-Unsubscribe headers. ref: { id } (Gmail/Microsoft) or { path, uid } (IMAP) */
+  messageUnsubHeaders(ref: unknown): Promise<{ listUnsub?: string; listUnsubPost?: string }>;
+  /** A short plain new email from this account (for "mailto:" unsubscribes) */
+  sendNew(to: string, subject: string, text: string): Promise<void>;
   /** Close any open connection (IMAP); a no-op for web APIs */
   close?(): Promise<void>;
 }
@@ -85,6 +89,19 @@ function gmailMailbox(token: string, email: string): Mailbox {
       return f.id;
     },
     removeIgnoreRule: async (ruleId) => { await gmailRequest('DELETE', `settings/filters/${ruleId}`, token); },
+    async messageUnsubHeaders(ref) {
+      const m = await gmail<{ payload?: { headers?: { name: string; value: string }[] } }>(
+        `messages/${(ref as { id: string }).id}`, token, { format: 'metadata', metadataHeaders: ['List-Unsubscribe', 'List-Unsubscribe-Post'] });
+      const h = (n: string) => m.payload?.headers?.find(x => x.name.toLowerCase() === n)?.value;
+      return { listUnsub: h('list-unsubscribe'), listUnsubPost: h('list-unsubscribe-post') };
+    },
+    async sendNew(to, subject, text) {
+      const clean = (s: string) => s.replace(/[\r\n]+/g, ' ');
+      const mime = [`From: ${email}`, `To: ${clean(to)}`, `Subject: ${clean(subject)}`, 'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset=UTF-8', '', text].join('\r\n');
+      const raw = btoa(unescape(encodeURIComponent(mime))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      await gmailRequest('POST', 'messages/send', token, { body: { raw } });
+    },
     async sendReply(t, to, cc, text) {
       // Your name + signature exactly as Gmail has them for this address
       let sender: Sender = { email, displayName: '', signatureHtml: '' };
@@ -201,7 +218,7 @@ export function graphMailbox(token: string, email: string): Mailbox { // exporte
       const out: GmailMessage[] = [];
       for (const m of msgs) {
         const from = fmtAddr(m.from ?? m.sender);
-        const extra = (m.internetMessageHeaders ?? []).filter(h => /^(references|list-unsubscribe)$/i.test(h.name));
+        const extra = (m.internetMessageHeaders ?? []).filter(h => /^(references|list-unsubscribe|list-unsubscribe-post)$/i.test(h.name));
         const labels = [
           ...(m.parentFolderId === f.inbox ? ['INBOX'] : []),
           ...(m.isRead === false ? ['UNREAD'] : []),
@@ -272,6 +289,20 @@ export function graphMailbox(token: string, email: string): Mailbox { // exporte
     },
 
     removeIgnoreRule: async (ruleId) => { await graph('DELETE', `me/mailFolders/inbox/messageRules/${ruleId}`, token); },
+
+    async messageUnsubHeaders(ref) {
+      const m = await graph<{ internetMessageHeaders?: { name: string; value: string }[] }>(
+        'GET', `me/messages/${encodeURIComponent((ref as { id: string }).id)}?$select=internetMessageHeaders`, token);
+      const h = (n: string) => m.internetMessageHeaders?.find(x => x.name.toLowerCase() === n)?.value;
+      return { listUnsub: h('list-unsubscribe'), listUnsubPost: h('list-unsubscribe-post') };
+    },
+
+    async sendNew(to, subject, text) {
+      await graph('POST', 'me/sendMail', token, {
+        message: { subject, body: { contentType: 'Text', content: text }, toRecipients: [{ emailAddress: { address: to } }] },
+        saveToSentItems: true,
+      });
+    },
 
     async sendReply(t, to, cc, text) {
       // Outlook builds the quoted original + threading headers; we put your words on top

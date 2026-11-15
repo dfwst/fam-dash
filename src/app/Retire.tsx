@@ -2,6 +2,10 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import { callFn } from '../lib/functions';
+import { UNSUB_ERRORS, unsubLabel, unsubscribeRetireItem } from '../lib/unsubscribe';
+
+// Per-item unsubscribe progress on this page
+type UnsubState = { busy?: boolean; msg?: string; url?: string; error?: boolean };
 
 // "Retire this address": everyone who still has this email address, and your progress moving
 // them to a new one. Built from a header scan of the whole mailbox; while "retiring" is on,
@@ -11,7 +15,7 @@ type Item = {
   id: string; group_key: string; name: string; kind: Kind; reason: string | null;
   message_count: number; first_seen: string | null; last_seen: string | null; samples: string[];
   sender: string | null; unsubscribe: string | null; status: 'todo' | 'done' | 'skipped';
-  flagged_at: string | null;
+  flagged_at: string | null; unsubscribed_at: string | null; unsubscribe_method: string | null;
 };
 type Acct = { id: string; email: string; nickname: string | null; retiring: boolean; retire_scanned_at: string | null };
 type Scan = { messages: number; groups: number; partial: boolean; update: number; unsubscribe: number; person: number; ignore: number; cost: number };
@@ -41,6 +45,37 @@ export default function Retire() {
   const [error, setError] = useState('');
   const [showDone, setShowDone] = useState(false);
   const [open, setOpen] = useState<Set<Kind>>(new Set(['update', 'person']));
+  const [unsub, setUnsub] = useState<Record<string, UnsubState>>({});
+  const [bulk, setBulk] = useState('');
+
+  // One sender: one-click / email happen on the server; a web-page-only sender gets a link to open
+  async function unsubscribeOne(it: Item): Promise<boolean> {
+    setUnsub(s => ({ ...s, [it.id]: { busy: true } }));
+    try {
+      const r = await unsubscribeRetireItem(it.id);
+      setUnsub(s => ({ ...s, [it.id]: { msg: unsubLabel(r), url: r.url, error: !r.ok && r.method !== 'link' } }));
+      if (r.ok) {
+        const now = new Date().toISOString();
+        setItems(list => list?.map(x => (x.id === it.id ? { ...x, status: 'done', unsubscribed_at: now, unsubscribe_method: r.method } : x)) ?? null);
+      }
+      return r.ok;
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'failed';
+      setUnsub(s => ({ ...s, [it.id]: { msg: UNSUB_ERRORS[m] ?? `Couldn’t unsubscribe (${m}).`, error: true } }));
+      return false;
+    }
+  }
+
+  async function unsubscribeAll(list: Item[]) {
+    if (!confirm(`Unsubscribe from ${list.length} mailing lists?\n\nrlyfe uses each sender’s official unsubscribe (one-click or email). `
+      + 'Senders that only offer a web page are left for you to open.')) return;
+    let done = 0;
+    for (const it of list) {
+      setBulk(`Unsubscribing… ${done} of ${list.length}`);
+      if (await unsubscribeOne(it)) done++;
+    }
+    setBulk(`Unsubscribed from ${done} of ${list.length}. Any left need their page opened (links below).`);
+  }
 
   const [loadError, setLoadError] = useState('');
   const load = useCallback(async () => {
@@ -161,7 +196,7 @@ export default function Retire() {
       {flagged.length > 0 && (
         <div className="stack">
           <h3 className="section-title">Still emailing the old address</h3>
-          <ul className="retire-list">{flagged.map(it => <Row key={it.id} it={it} label={SECTIONS.find(s => s.kind === it.kind)!.doneLabel} onStatus={setStatus} onKind={setKind} />)}</ul>
+          <ul className="retire-list">{flagged.map(it => <Row key={it.id} it={it} label={SECTIONS.find(s => s.kind === it.kind)!.doneLabel} onStatus={setStatus} onKind={setKind} unsub={unsub[it.id]} onUnsub={unsubscribeOne} />)}</ul>
         </div>
       )}
 
@@ -179,8 +214,21 @@ export default function Retire() {
             {isOpen && (
               <>
                 <p className="muted small">{sec.help}</p>
+                {sec.kind === 'unsubscribe' && (() => {
+                  const todo = list.filter(i => i.status === 'todo' && !i.unsubscribed_at);
+                  return (
+                    <>
+                      {todo.length > 1 && (
+                        <button className="primary" disabled={!!bulk && bulk.startsWith('Unsubscribing')} onClick={() => unsubscribeAll(todo)}>
+                          Unsubscribe from all {todo.length}
+                        </button>
+                      )}
+                      {bulk && <p className="muted small">{bulk}</p>}
+                    </>
+                  );
+                })()}
                 <ul className="retire-list">
-                  {list.map(it => <Row key={it.id} it={it} label={sec.doneLabel} onStatus={setStatus} onKind={setKind} />)}
+                  {list.map(it => <Row key={it.id} it={it} label={sec.doneLabel} onStatus={setStatus} onKind={setKind} unsub={unsub[it.id]} onUnsub={unsubscribeOne} />)}
                   {list.length === 0 && <li className="muted small">All done here.</li>}
                 </ul>
               </>
@@ -192,15 +240,18 @@ export default function Retire() {
   );
 }
 
-function Row({ it, label, onStatus, onKind }: {
+function Row({ it, label, onStatus, onKind, unsub, onUnsub }: {
   it: Item; label: string; onStatus: (it: Item, s: Item['status']) => void; onKind: (it: Item, k: Kind) => void;
+  unsub?: UnsubState; onUnsub: (it: Item) => void;
 }) {
-  const unsubHref = it.unsubscribe && /^(https:|mailto:)/.test(it.unsubscribe) ? it.unsubscribe : null;
+  const scammy = /^likely (phishing|spam)/i.test(it.reason ?? '');
+  const canUnsub = it.kind === 'unsubscribe' && !scammy && !it.unsubscribed_at;
   return (
     <li className={`retire-item ${it.status !== 'todo' ? 'finished' : ''}`}>
       <div className="retire-top">
         <span className="retire-name">{it.name}</span>
         {/^likely phishing/i.test(it.reason ?? '') && <span className="badge urgent">Phishing</span>}
+        {it.unsubscribed_at && <span className="badge soft">Unsubscribed</span>}
         {it.flagged_at && it.status === 'todo' && <span className="badge back">New mail</span>}
         <span className="todo-meta">{it.message_count} · last {when(it.last_seen)}</span>
       </div>
@@ -211,7 +262,7 @@ function Row({ it, label, onStatus, onKind }: {
           <>
             <button onClick={() => onStatus(it, 'done')}>✓ {label}</button>
             <button onClick={() => onStatus(it, 'skipped')}>Skip</button>
-            {it.kind === 'unsubscribe' && unsubHref && <a className="open" href={unsubHref} target="_blank" rel="noreferrer">Unsubscribe ↗</a>}
+            {canUnsub && <button disabled={unsub?.busy} onClick={() => onUnsub(it)}>{unsub?.busy ? 'Unsubscribing…' : 'Unsubscribe'}</button>}
           </>
         ) : (
           <button onClick={() => onStatus(it, 'todo')}>Undo ({it.status === 'done' ? label : 'skipped'})</button>
@@ -220,6 +271,11 @@ function Row({ it, label, onStatus, onKind }: {
           {(Object.keys(KIND_NAME) as Kind[]).map(k => <option key={k} value={k}>{KIND_NAME[k]}</option>)}
         </select>
       </div>
+      {unsub?.msg && (
+        <p className={unsub.error ? 'error small' : 'muted small'}>
+          {unsub.msg}{unsub.url && <> — <a href={unsub.url} target="_blank" rel="noreferrer">open their unsubscribe page ↗</a></>}
+        </p>
+      )}
     </li>
   );
 }

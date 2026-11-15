@@ -8,6 +8,7 @@ import EmailBody from './EmailBody';
 import ReplyBox from './ReplyBox';
 import AddTodo from '../todo/AddTodo';
 import { addTask } from '../../lib/tasks';
+import { UNSUB_ERRORS, unsubLabel, unsubscribeThread } from '../../lib/unsubscribe';
 
 // Read a conversation inside rlyfe. Nothing is marked read in Gmail by looking at it.
 // Done / Ignore / Remind me work here just like on the to-do list; Reply (M5) sends from here.
@@ -19,6 +20,7 @@ type Msg = {
 };
 type ThreadData = {
   threadId: string; account: string; provider: 'google' | 'microsoft' | 'imap'; webLink: string | null;
+  unsubscribe: 'one-click' | 'email' | 'link' | null;
   subject: string; messages: Msg[];
 };
 
@@ -62,6 +64,24 @@ export default function ThreadView() {
 
   const ref = { account_id: accountId, thread_id: threadId };
 
+  const [unsub, setUnsub] = useState<{ busy?: boolean; msg?: string; url?: string } | null>(null);
+
+  // Unsubscribe from this sender's list, then archive this email (Done, with Undo in Activity)
+  async function unsubscribe() {
+    const from = data?.messages[data.messages.length - 1]?.from;
+    if (!confirm(`Unsubscribe from ${from?.name || from?.email || 'this sender'}?\n\n`
+      + 'rlyfe uses the sender’s official unsubscribe, then archives this email.')) return;
+    setUnsub({ busy: true });
+    try {
+      const r = await unsubscribeThread(accountId, threadId);
+      setUnsub({ msg: unsubLabel(r), url: r.url });
+      if (r.ok) await run(() => act.done(ref));
+    } catch (e) {
+      const m = e instanceof Error ? e.message : 'failed';
+      setUnsub({ msg: UNSUB_ERRORS[m] ?? `Couldn’t unsubscribe (${m}).` });
+    }
+  }
+
   async function run(fn: () => Promise<unknown>) {
     setBusy(true);
     try { await fn(); nav(-1); }
@@ -87,8 +107,18 @@ export default function ThreadView() {
     <section className="reader">
       <div className="reader-head">
         <button className="link back" onClick={() => nav(-1)}>← Back</button>
-        {href && <a className="link" href={href} {...(outlook || opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Open in {outlook ? 'Outlook' : 'Gmail'} ↗</a>}
+        <span className="reader-head-right">
+          {data.unsubscribe && !unsub?.msg && (
+            <button className="link" disabled={unsub?.busy} onClick={unsubscribe}>{unsub?.busy ? 'Unsubscribing…' : 'Unsubscribe'}</button>
+          )}
+          {href && <a className="link" href={href} {...(outlook || opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>Open in {outlook ? 'Outlook' : 'Gmail'} ↗</a>}
+        </span>
       </div>
+      {unsub?.msg && (
+        <p className="notice">
+          {unsub.msg}{unsub.url && <> — <a href={unsub.url} target="_blank" rel="noreferrer">open their unsubscribe page ↗</a></>}
+        </p>
+      )}
       <h2 className="reader-subject">{data.subject}</h2>
       <p className="muted small">{data.account} · {data.messages.length} message{data.messages.length > 1 ? 's' : ''}</p>
       {summary && <p className="reader-summary">{summary}</p>}

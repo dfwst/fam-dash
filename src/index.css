@@ -350,3 +350,4 @@ body { overflow-wrap: anywhere; }
 .retire-sample { color: var(--muted); font-style: italic; }
 .retire-item .actions { padding-left: 0; flex-wrap: wrap; }
 .retire-kind { font: inherit; font-size: .85rem; margin-left: auto; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.reader-head-right { display: flex; gap: 14px; align-items: center; }

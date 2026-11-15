@@ -18,7 +18,9 @@ import { decrypt } from './crypto.ts';
 import { accessTokenFor, type Provider } from './accounts.ts';
 import { parseFrom } from './gmail-parse.ts';
 
-export type Row = { from: string; name: string; subject: string; date: number; unsub?: string };
+// ref: where this message lives, so its unsubscribe header can be fetched later
+// ({ path, uid } for IMAP, { id } for Gmail / Microsoft)
+export type Row = { from: string; name: string; subject: string; date: number; unsub?: string; ref?: unknown };
 export type ScanResult = { rows: Row[]; wroteTo: Set<string>; folders: number; partial: boolean };
 
 const YEARS = 5;
@@ -180,7 +182,10 @@ export async function imapStep(
             const date = m.envelope?.date ? new Date(m.envelope.date).getTime() : 0;
             const sender = m.envelope?.from?.[0];
             if (!sender?.address || (date && date < cutoff)) continue;
-            rows.push({ from: sender.address.toLowerCase(), name: sender.name ?? '', subject: m.envelope?.subject ?? '', date });
+            rows.push({
+              from: sender.address.toLowerCase(), name: sender.name ?? '', subject: m.envelope?.subject ?? '', date,
+              ref: m.uid ? { path: job.path, uid: m.uid } : undefined,
+            });
           }
         }).catch(e => console.error('retire batch failed', job.path, job.start, job.end, e instanceof Error ? e.message : e));
         // Every message is read: folders filled by moving mail (e.g. a triage into Archive) are in
@@ -229,7 +234,7 @@ async function scanGraph(token: string, budgetEnd: number): Promise<ScanResult> 
     for (const m of r.value) {
       const a = m.from?.emailAddress;
       if (!a?.address || skip.has(m.parentFolderId ?? '')) continue;
-      rows.push({ from: a.address.toLowerCase(), name: a.name ?? '', subject: m.subject ?? '', date: Date.parse(m.receivedDateTime ?? '') || 0 });
+      rows.push({ from: a.address.toLowerCase(), name: a.name ?? '', subject: m.subject ?? '', date: Date.parse(m.receivedDateTime ?? '') || 0, ref: { id: (m as { id?: string }).id } });
     }
     url = r['@odata.nextLink'];
   }
@@ -276,7 +281,7 @@ async function scanGmail(token: string, budgetEnd: number): Promise<ScanResult> 
     const m = await gmail(`messages/${id}`, token, { format: 'metadata', metadataHeaders: ['From', 'Subject', 'Date', 'List-Unsubscribe'] });
     const from = parseFrom(header(m, 'From'));
     if (!from.email.includes('@')) return;
-    rows.push({ from: from.email, name: from.name, subject: header(m, 'Subject'), date: Number(m.internalDate) || 0, unsub: firstUnsub(header(m, 'List-Unsubscribe')) });
+    rows.push({ from: from.email, name: from.name, subject: header(m, 'Subject'), date: Number(m.internalDate) || 0, unsub: firstUnsub(header(m, 'List-Unsubscribe')), ref: { id } });
   });
   await pool(await ids(`in:sent newer_than:${YEARS}y`, 500), async id => {
     const m = await gmail(`messages/${id}`, token, { format: 'metadata', metadataHeaders: ['To', 'Cc'] });
@@ -293,6 +298,7 @@ async function scanGmail(token: string, budgetEnd: number): Promise<ScanResult> 
 export type Group = {
   key: string; personal: boolean; name: string; sender: string; count: number; first: number; last: number;
   subjects: string[]; unsub?: string; unsubCount: number; accountSignals: number; wroteTo: boolean;
+  ref?: unknown; // newest message from this sender
 };
 
 export function groupRows(rows: Row[], wroteTo: Set<string>, ownAddress: string): Group[] {
@@ -309,7 +315,10 @@ export function groupRows(rows: Row[], wroteTo: Set<string>, ownAddress: string)
     };
     g.count++;
     if (r.date && r.date < g.first) g.first = r.date;
-    if (r.date > g.last) { g.last = r.date; g.sender = r.from; if (r.name) g.name = r.name; }
+    if (r.date > g.last || !g.ref) {
+      if (r.date > g.last) { g.last = r.date; g.sender = r.from; if (r.name) g.name = r.name; }
+      if (r.ref && (r.date >= g.last || !g.ref)) g.ref = r.ref;
+    }
     if (r.subject && g.subjects.length < 40 && !g.subjects.includes(r.subject)) g.subjects.push(r.subject);
     if (r.unsub) { g.unsubCount++; g.unsub ??= r.unsub; }
     if (ACCOUNT_RX.test(r.subject)) g.accountSignals++;
