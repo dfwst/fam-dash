@@ -27,6 +27,7 @@ export const PRESETS: Record<Exclude<ImapService, 'other'>, Omit<ImapCreds, 'ser
 };
 
 const MAX_SOURCE = 600_000; // bytes of each message we download — plenty for text, skips huge attachments
+const LOOKBACK_DAYS = 120;  // how far back each folder is indexed to piece conversations together
 
 // deno-lint-ignore no-explicit-any
 type Client = any;
@@ -98,15 +99,38 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
     try { return await fn(); } finally { lock.release(); }
   }
 
-  // Every message in one folder that belongs to the conversation (by header)
+  // Which conversation each recent message in a folder belongs to. Built from each message's
+  // own headers on OUR side — Yahoo's server-side header SEARCH can't be relied on.
+  // Cached per folder for this function call; moves clear it.
+  type Ref = { uid: number; root: string; seen: boolean; messageId?: string };
+  const index = new Map<string, Promise<Ref[]>>();
+  const indexFolder = (path: string, days = LOOKBACK_DAYS) => {
+    const key = `${path}|${days}`;
+    if (!index.has(key)) index.set(key, inFolder(path, async () => {
+      const since = new Date(Date.now() - days * 86_400_000);
+      const uids: number[] = (await client.search({ since }, { uid: true })) || [];
+      const out: Ref[] = [];
+      if (!uids.length) return out;
+      for await (const m of client.fetch(uids, { uid: true, flags: true, envelope: true, headers: ['references'] }, { uid: true })) {
+        const refs = m.headers ? new TextDecoder().decode(m.headers).replace(/^references:\s*/i, '') : '';
+        out.push({
+          uid: m.uid,
+          root: rootOf(refs, m.envelope?.inReplyTo, m.envelope?.messageId, `uid:${path}:${m.uid}`),
+          seen: !!m.flags?.has('\\Seen'),
+          messageId: m.envelope?.messageId,
+        });
+      }
+      return out;
+    }));
+    return index.get(key)!;
+  };
+  const forget = (...paths: string[]) => {
+    for (const k of [...index.keys()]) if (paths.some(p => k.startsWith(`${p}|`))) index.delete(k);
+  };
+
+  // Every recent message in one folder that belongs to the conversation
   async function uidsFor(path: string, root: string): Promise<number[]> {
-    if (root.startsWith('uid:')) { // a message without a Message-ID: uid:<folder>:<uid>
-      const [, folder, uid] = root.split(':');
-      return folder === path ? [Number(uid)] : [];
-    }
-    return inFolder(path, async () => (await client.search({
-      or: [{ header: { 'message-id': root } }, { header: { references: root } }, { header: { 'in-reply-to': root } }],
-    }, { uid: true })) || []);
+    return (await indexFolder(path)).filter(r => r.root === root).map(r => r.uid);
   }
 
   const done = <T>(p: Promise<T>) => p.finally(rest);
@@ -118,18 +142,13 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
 
     listInbox: (days) => done((async () => {
       await open();
-      const since = new Date(Date.now() - days * 86_400_000);
       const byRoot = new Map<string, string[]>();
-      await inFolder('INBOX', async () => {
-        const uids: number[] = (await client.search({ since }, { uid: true })) || [];
-        if (!uids.length) return;
-        for await (const m of client.fetch(uids, { uid: true, flags: true, envelope: true, headers: ['references'] }, { uid: true })) {
-          const refs = m.headers ? new TextDecoder().decode(m.headers).replace(/^references:\s*/i, '') : '';
-          const root = rootOf(refs, m.envelope?.inReplyTo, m.envelope?.messageId, `uid:INBOX:${m.uid}`);
-          const seen = m.flags?.has('\\Seen') ? 's' : 'u';
-          byRoot.set(root, [...(byRoot.get(root) ?? []), `${m.uid}${seen}`]);
-        }
-      });
+      for (const r of await indexFolder('INBOX', Math.max(days, LOOKBACK_DAYS))) {
+        byRoot.set(r.root, [...(byRoot.get(r.root) ?? []), `${r.uid}${r.seen ? 's' : 'u'}`]);
+      }
+      // Only conversations with something from the last `days` days (the index looks further back)
+      const recent = new Set((await indexFolder('INBOX', days)).map(r => r.root));
+      for (const root of [...byRoot.keys()]) if (!recent.has(root)) byRoot.delete(root);
       // version = which messages are in the inbox + their read state
       return [...byRoot].map(([root, parts]) => ({ id: enc(root), version: parts.sort().join('.') }));
     })()),
@@ -206,6 +225,7 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
         await client.messageFlagsAdd(uids, ['\\Seen'], { uid: true });
         await client.messageMove(uids, f.archive, { uid: true });
       });
+      forget(f.inbox, f.archive);
     })()),
 
     unarchive: (id, unread) => done((async () => {
@@ -213,6 +233,7 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
       const f = await folders();
       const uids = await uidsFor(f.archive, dec(id));
       if (uids.length) await inFolder(f.archive, () => client.messageMove(uids, f.inbox, { uid: true }));
+      forget(f.inbox, f.archive);
       if (unread) {
         const back = await uidsFor(f.inbox, dec(id));
         const last = back.sort((a, b) => a - b).pop();
@@ -242,9 +263,10 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
       // Most IMAP services don't file SMTP mail in Sent — check, and file it ourselves if not
       const f = await folders();
       await new Promise(r => setTimeout(r, 2500));
-      const filed = await inFolder(f.sent, async () =>
-        ((await client.search({ header: { 'message-id': messageId } }, { uid: true })) || []).length > 0);
+      forget(f.sent);
+      const filed = (await indexFolder(f.sent, 2)).some(r => r.messageId === messageId);
       if (!filed) await client.append(f.sent, source, ['\\Seen']);
+      forget(f.sent);
       return { id: messageId };
     })()),
   };

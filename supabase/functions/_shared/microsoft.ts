@@ -12,8 +12,10 @@ export const MS_SCOPES = [
   'MailboxSettings.ReadWrite',   // "Always ignore" inbox rules
 ];
 
-const CLIENT_ID = Deno.env.get('MICROSOFT_CLIENT_ID') ?? '';
-const CLIENT_SECRET = Deno.env.get('MICROSOFT_CLIENT_SECRET') ?? '';
+// Read on every use (not once at start-up): a warm function would otherwise keep using an
+// old secret after you rotate it in Supabase. trim() guards against a pasted space.
+const clientId = () => (Deno.env.get('MICROSOFT_CLIENT_ID') ?? '').trim();
+const clientSecret = () => (Deno.env.get('MICROSOFT_CLIENT_SECRET') ?? '').trim();
 const AUTHORITY = 'https://login.microsoftonline.com/common/oauth2/v2.0';
 // Netlify proxies this to the ms-oauth-callback function (see netlify.toml)
 export const MS_REDIRECT_URI = 'https://rlyfe.app/oauth/microsoft/callback';
@@ -23,7 +25,7 @@ export const CONSUMER_TENANT = '9188040d-6c67-4c5b-b112-36a304b66dad';
 
 export function msAuthUrl(state: string, loginHint?: string): string {
   const p = new URLSearchParams({
-    client_id: CLIENT_ID,
+    client_id: clientId(),
     response_type: 'code',
     redirect_uri: MS_REDIRECT_URI,
     response_mode: 'query',
@@ -45,7 +47,7 @@ async function tokenCall(params: Record<string, string>): Promise<MsToken> {
   const res = await fetch(`${AUTHORITY}/token`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, scope: MS_SCOPES.join(' '), ...params }),
+    body: new URLSearchParams({ client_id: clientId(), client_secret: clientSecret(), scope: MS_SCOPES.join(' '), ...params }),
   });
   const body = await res.json();
   if (!res.ok) throw new MsError(body.error ?? 'token-failed', res.status);
