@@ -45,6 +45,15 @@ export default function Settings() {
     setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, policy } : x)) ?? null);
   }
 
+  async function setNickname(a: Account, nickname: string) {
+    const next = nickname.trim().slice(0, 24) || null;
+    if (next === a.nickname) return;
+    setError('');
+    const { error } = await supabase.from('connected_accounts').update({ nickname: next }).eq('id', a.id);
+    if (error) return setError(error.message);
+    setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, nickname: next } : x)) ?? null);
+  }
+
   async function connect(loginHint?: string) {
     setBusy(true);
     setError('');
@@ -78,6 +87,7 @@ export default function Settings() {
               <div className="row-main">
                 <div className="row-title ellipsis">{a.email}</div>
                 <div className="muted small">{a.tabs?.name ?? 'No tab'}</div>
+                <NicknameField account={a} onSave={n => setNickname(a, n)} />
                 <label className="policy">
                   <span className="muted small">Morning cleanup</span>
                   <select value={a.policy} onChange={e => setPolicy(a, e.target.value as Account['policy'])}>
@@ -108,5 +118,29 @@ export default function Settings() {
 
       <GmailOpenTest />
     </section>
+  );
+}
+
+// The short name shown on each email ("tsagmail"). Saves when you leave the field or press Enter.
+function NicknameField({ account, onSave }: { account: Account; onSave: (n: string) => void }) {
+  const [value, setValue] = useState(account.nickname ?? '');
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setValue(account.nickname ?? ''), [account.nickname]);
+
+  const commit = () => {
+    if (value.trim() === (account.nickname ?? '')) return;
+    onSave(value);
+    setSaved(true);
+    window.setTimeout(() => setSaved(false), 1500);
+  };
+
+  return (
+    <label className="policy">
+      <span className="muted small">Label on emails</span>
+      <input value={value} maxLength={24} placeholder={account.email.split('@')[0]}
+             onChange={e => setValue(e.target.value)} onBlur={commit}
+             onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
+      <span className="muted small nick-state" aria-live="polite">{saved ? 'Saved ✓' : ''}</span>
+    </label>
   );
 }

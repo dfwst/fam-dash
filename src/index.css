@@ -313,3 +313,6 @@ body { overflow-wrap: anywhere; }
 .toast.inline { position: static; transform: none; margin: 0; width: auto; }
 .warn-note { margin: 0; padding: 8px 12px; border-radius: 10px; background: rgba(178,106,0,.12); color: #8a5300; }
 @media (prefers-color-scheme: dark) { .warn-note { color: #f0b860; background: rgba(240,184,96,.12); } }
+.policy input { font: inherit; font-size: 16px; width: 9.5em; min-width: 0; color: var(--text); background: var(--bg);
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; min-height: 36px; }
+.nick-state { color: var(--accent); }
