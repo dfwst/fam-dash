@@ -12,7 +12,7 @@ import { graph } from './microsoft.ts';
 import { imapMailbox, type ImapCreds } from './imap.ts';
 import { accessTokenFor, type Provider } from './accounts.ts';
 import { decrypt } from './crypto.ts';
-import { parseFrom, type GmailMessage, type GmailThread, type Part } from './gmail-parse.ts';
+import { b64urlText, findPart, parseFrom, type GmailMessage, type GmailThread, type Part } from './gmail-parse.ts';
 import { buildReply, replyBase, type Sender } from './reply.ts';
 
 export type MailThread = GmailThread & { webLink?: string | null };
@@ -35,6 +35,8 @@ export interface Mailbox {
   sendReply(t: MailThread, to: string[], cc: string[], text: string): Promise<{ id: string }>;
   /** One message's List-Unsubscribe headers. ref: { id } (Gmail/Microsoft) or { path, uid } (IMAP) */
   messageUnsubHeaders(ref: unknown): Promise<{ listUnsub?: string; listUnsubPost?: string }>;
+  /** One message's body (HTML if it has one, else text), by the same ref */
+  messageBody(ref: unknown): Promise<string>;
   /** A short plain new email from this account (for "mailto:" unsubscribes) */
   sendNew(to: string, subject: string, text: string): Promise<void>;
   /** Close any open connection (IMAP); a no-op for web APIs */
@@ -94,6 +96,11 @@ function gmailMailbox(token: string, email: string): Mailbox {
         `messages/${(ref as { id: string }).id}`, token, { format: 'metadata', metadataHeaders: ['List-Unsubscribe', 'List-Unsubscribe-Post'] });
       const h = (n: string) => m.payload?.headers?.find(x => x.name.toLowerCase() === n)?.value;
       return { listUnsub: h('list-unsubscribe'), listUnsubPost: h('list-unsubscribe-post') };
+    },
+    async messageBody(ref) {
+      const m = await gmail<GmailMessage>(`messages/${(ref as { id: string }).id}`, token, { format: 'full' });
+      const part = findPart(m.payload, 'text/html') ?? findPart(m.payload, 'text/plain');
+      return part?.body?.data ? b64urlText(part.body.data) : '';
     },
     async sendNew(to, subject, text) {
       const clean = (s: string) => s.replace(/[\r\n]+/g, ' ');
@@ -295,6 +302,12 @@ export function graphMailbox(token: string, email: string): Mailbox { // exporte
         'GET', `me/messages/${encodeURIComponent((ref as { id: string }).id)}?$select=internetMessageHeaders`, token);
       const h = (n: string) => m.internetMessageHeaders?.find(x => x.name.toLowerCase() === n)?.value;
       return { listUnsub: h('list-unsubscribe'), listUnsubPost: h('list-unsubscribe-post') };
+    },
+
+    async messageBody(ref) {
+      const m = await graph<{ body?: { content?: string } }>(
+        'GET', `me/messages/${encodeURIComponent((ref as { id: string }).id)}?$select=body`, token);
+      return m.body?.content ?? '';
     },
 
     async sendNew(to, subject, text) {

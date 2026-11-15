@@ -6,7 +6,7 @@ import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import { isValidThreadId, openMailbox } from '../_shared/mailbox.ts';
 import { b64urlText, findPart, header, parseFrom, type Part } from '../_shared/gmail-parse.ts';
-import { planUnsubscribe, unsubHeadersOf } from '../_shared/unsubscribe.ts';
+import { findBodyUnsubLink, planUnsubscribe, unsubHeadersOf } from '../_shared/unsubscribe.ts';
 import { groupKey } from '../_shared/retire.ts';
 
 const MAX_HTML = 400_000; // characters per message — enough for any normal email
@@ -49,9 +49,10 @@ Deno.serve(async (req) => {
     });
     // Can this be unsubscribed from, and how? (mailing lists only — never a person)
     const u = unsubHeadersOf(t);
-    const plan = planUnsubscribe(u.listUnsub, u.listUnsubPost);
-    const lastFrom = messages[messages.length - 1]?.from.email ?? '';
-    const unsubscribe = plan.method !== 'none' && !groupKey(lastFrom).personal ? plan.method : null;
+    let plan: string = planUnsubscribe(u.listUnsub, u.listUnsubPost).method;
+    const last = messages[messages.length - 1];
+    if (plan === 'none' && findBodyUnsubLink(last?.html ?? last?.text ?? '')) plan = 'link'; // link in the email itself
+    const unsubscribe = plan !== 'none' && !groupKey(last?.from.email ?? '').personal ? plan : null;
     await mb.close?.();
 
     return json({

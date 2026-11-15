@@ -11,7 +11,8 @@ import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import { isValidThreadId, openMailbox, type Mailbox } from '../_shared/mailbox.ts';
 import { groupKey } from '../_shared/retire.ts';
-import { oneClick, planUnsubscribe, unsubHeadersOf } from '../_shared/unsubscribe.ts';
+import { findBodyUnsubLink, oneClick, planUnsubscribe, unsubHeadersOf } from '../_shared/unsubscribe.ts';
+import { b64urlText, findPart } from '../_shared/gmail-parse.ts';
 
 class Refused extends Error {}
 const SCAMMY = /^likely (phishing|spam)/i;
@@ -26,6 +27,7 @@ Deno.serve(async (req) => {
   try {
     let accountId: string, sender: string, itemId: string | null = null;
     let headers: { listUnsub?: string; listUnsubPost?: string };
+    let bodyOf: () => Promise<string>; // the newest email's body, if we need its unsubscribe link
 
     if (body.retireItemId) {
       const { data: it } = await ctx.admin.from('retire_items')
@@ -38,6 +40,8 @@ Deno.serve(async (req) => {
       accountId = it.account_id; sender = it.sender ?? ''; itemId = it.id;
       mb = await mailboxFor(ctx, accountId);
       headers = await mb.messageUnsubHeaders(it.sample_ref);
+      const m = mb, ref = it.sample_ref;
+      bodyOf = () => m.messageBody(ref);
     } else {
       const { data: t } = await ctx.admin.from('email_threads')
         .select('account_id, thread_id, from_email, priority, last_from_me')
@@ -50,10 +54,21 @@ Deno.serve(async (req) => {
       accountId = t.account_id; sender = t.from_email ?? '';
       mb = await mailboxFor(ctx, accountId);
       if (!isValidThreadId(mb.provider, t.thread_id)) throw new Refused('not-found');
-      headers = unsubHeadersOf(await mb.getThread(t.thread_id));
+      const thread = await mb.getThread(t.thread_id);
+      headers = unsubHeadersOf(thread);
+      bodyOf = async () => {
+        const last = thread.messages[thread.messages.length - 1];
+        const part = last && (findPart(last.payload, 'text/html') ?? findPart(last.payload, 'text/plain'));
+        return part?.body?.data ? b64urlText(part.body.data) : '';
+      };
     }
 
     let plan = planUnsubscribe(headers.listUnsub, headers.listUnsubPost);
+    // No unsubscribe header (typical before 2024) → look for the link in the email itself
+    if (plan.method === 'none') {
+      const link = findBodyUnsubLink(await bodyOf().catch(() => ''));
+      if (link) plan = { method: 'link', url: link };
+    }
     // Preview: say how it WOULD unsubscribe, change nothing
     if (body.dryRun) return json({ method: plan.method, ok: false, dryRun: true });
     let ok = false;

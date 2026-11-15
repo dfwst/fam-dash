@@ -63,6 +63,26 @@ export async function oneClick(url: string): Promise<boolean> {
   }
 }
 
+// No header (common before the 2024 bulk-sender rules)? Most marketing mail still has an
+// "Unsubscribe" link in its body — find it so the app can open it for you. Never auto-clicked.
+export function findBodyUnsubLink(html: string): string | undefined {
+  const decode = (s: string) => s.replace(/&amp;/g, '&').replace(/&#x3D;|&#61;/g, '=').trim();
+  const anchors = [...html.matchAll(/<a\b[^>]*?href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)];
+  const ok = (u: string) => {
+    try { const x = new URL(u); return x.protocol === 'https:' && SAFE_HOST.test(x.hostname); } catch { return false; }
+  };
+  // Prefer the link whose TEXT says unsubscribe, then one whose address does
+  const words = /unsubscri|opt[\s-]?out|email preferences|manage (your )?(email|subscription|preferences)/i;
+  for (const [, href, text] of anchors) {
+    const t = text.replace(/<[^>]+>/g, ' ');
+    if (words.test(t) && ok(decode(href))) return decode(href);
+  }
+  for (const [, href] of anchors) if (/unsub|optout|opt-out/i.test(href) && ok(decode(href))) return decode(href);
+  // Plain-text emails: a bare URL with "unsub" in it
+  const bare = html.match(/https:\/\/[^\s"'<>]*unsub[^\s"'<>]*/i)?.[0];
+  return bare && ok(bare) ? bare : undefined;
+}
+
 // Headers of the newest message in a (Gmail-shaped) thread that carries an unsubscribe header
 export function unsubHeadersOf(t: { messages: { payload: { headers?: { name: string; value: string }[] } }[] }) {
   for (const m of [...t.messages].reverse()) {

@@ -177,8 +177,8 @@ export async function imapStep(
         const rows: Row[] = [];
         // Envelope only (sender, subject, date): Yahoo serves it fast; asking for extra header
         // fields makes it open every message and crawl
-        await inFolder(client, job.path, async () => {
-          for await (const m of client.fetch(`${job.start}:${job.end}`, { envelope: true })) {
+        const read = (from: number, to: number) => inFolder(client, job.path, async () => {
+          for await (const m of client.fetch(`${from}:${to}`, { envelope: true })) {
             const date = m.envelope?.date ? new Date(m.envelope.date).getTime() : 0;
             const sender = m.envelope?.from?.[0];
             if (!sender?.address || (date && date < cutoff)) continue;
@@ -187,7 +187,21 @@ export async function imapStep(
               ref: m.uid ? { path: job.path, uid: m.uid } : undefined,
             });
           }
-        }).catch(e => console.error('retire batch failed', job.path, job.start, job.end, e instanceof Error ? e.message : e));
+        });
+        try {
+          await read(job.start, job.end);
+        } catch {
+          // Yahoo sometimes refuses a batch ("Command failed") — retry it in slices of 100 after a
+          // short pause; a slice that still fails is counted as skipped (shown in the result)
+          await new Promise(r => setTimeout(r, 1500));
+          for (let to = job.end; to >= job.start; to -= 100) {
+            const from = Math.max(job.start, to - 99);
+            await read(from, to).catch(e => {
+              state.skipped = (state.skipped ?? 0) + (to - from + 1);
+              console.error('retire slice failed', job.path, from, to, e instanceof Error ? e.message : e);
+            });
+          }
+        }
         // Every message is read: folders filled by moving mail (e.g. a triage into Archive) are in
         // moving order, not date order, so a batch of old mail says nothing about the next one.
         state.pending = state.pending!.filter(p => p !== job);

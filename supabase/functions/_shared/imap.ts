@@ -286,6 +286,20 @@ export function imapMailbox(c: ImapCreds, email: string): Mailbox {
       return { listUnsub: get('list-unsubscribe'), listUnsubPost: get('list-unsubscribe-post') };
     })()),
 
+    // One message's body by { path, uid } (for finding an unsubscribe link in it)
+    messageBody: (ref) => done((async () => {
+      await open();
+      const { path, uid } = ref as { path: string; uid: number };
+      let body = '';
+      await inFolder(path, async () => {
+        for await (const m of client.fetch([uid], { uid: true, source: { maxLength: MAX_SOURCE } }, { uid: true })) {
+          const p = await simpleParser(m.source, { skipImageLinks: true, skipTextToHtml: true });
+          body = (typeof p.html === 'string' && p.html) || p.text || '';
+        }
+      });
+      return body;
+    })()),
+
     // A short plain email (used for "mailto:" unsubscribes)
     sendNew: (to, subject, text) => done((async () => {
       await newSmtp(c).sendMail({ from: email, to, subject, text });
