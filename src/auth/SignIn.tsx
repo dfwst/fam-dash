@@ -3,6 +3,14 @@ import { supabase } from '../lib/supabase';
 import { getJoinToken } from '../lib/join';
 import Logo from '../app/Logo';
 
+const SIGNUP_ERRORS: Record<string, string> = {
+  'invite-expired': 'That invite link has expired or was already used. Ask for a new one.',
+  'already-signed-up': 'This invite already created a login — sign in with it below.',
+  'email-in-use': 'That email already has a login — sign in instead.',
+  'weak-password': 'Use at least 10 characters for your password.',
+  'bad-email': 'Check the email address.',
+};
+
 // Sign in — or, when you arrived from an invite link, create your login first.
 export default function SignIn() {
   const invited = !!getJoinToken();
@@ -26,14 +34,18 @@ export default function SignIn() {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) setError(error.message);
     } else {
-      const { data, error } = await supabase.auth.signUp({
-        email, password, options: { emailRedirectTo: window.location.origin },
+      // Public sign-ups are off: the invite itself creates the login, then we sign straight in
+      const { data, error } = await supabase.functions.invoke('invite-signup', {
+        body: { token: getJoinToken(), email, password },
       });
-      if (error) setError(error.message);
-      // Email confirmation on: no session yet — they confirm, then sign in here
-      else if (!data.session) {
-        setNote(`Check ${email} for a confirmation link, then come back and sign in.`);
-        setMode('in');
+      const code = (data as { error?: string } | null)?.error
+        ?? (error ? await (error as { context?: Response }).context?.json?.().then((b: { error?: string }) => b.error).catch(() => 'signup-failed') : undefined);
+      if (code) {
+        setError(SIGNUP_ERRORS[code] ?? `Couldn’t create the login (${code}).`);
+        if (code === 'already-signed-up' || code === 'email-in-use') setMode('in');
+      } else {
+        const { error: e2 } = await supabase.auth.signInWithPassword({ email, password });
+        if (e2) setError(e2.message);
       }
     }
     setBusy(false);

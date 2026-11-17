@@ -20,3 +20,7 @@ verify_jwt = false
 # Joining a household: the caller is signed in (aal2) but not a member yet — it checks that itself.
 [functions.invite-accept]
 verify_jwt = true
+
+# Creating a login from an invite: no session exists yet — the invite token authorizes it.
+[functions.invite-signup]
+verify_jwt = false

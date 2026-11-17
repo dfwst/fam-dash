@@ -35,6 +35,8 @@ Deno.serve(async (req) => {
   const { data: inv } = await admin.from('household_invites')
     .update({ accepted_by: user.id, accepted_at: new Date().toISOString() })
     .eq('token_hash', await sha256(token)).is('accepted_at', null).gt('expires_at', new Date().toISOString())
+    // An invite that created a login can only be used by THAT login
+    .or(`signup_user_id.is.null,signup_user_id.eq.${user.id}`)
     .select('household_id, name, profile').maybeSingle();
   if (!inv) return json({ error: 'invite-expired' }, 400);
 
