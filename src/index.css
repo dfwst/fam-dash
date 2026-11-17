@@ -528,3 +528,27 @@ a.today-row:hover { background: color-mix(in srgb, var(--accent-soft) 45%, trans
 @keyframes skel { from { opacity: .7; } to { opacity: .3; } }
 .signout { align-self: flex-start; min-height: 44px; padding: 0 18px; border-radius: 10px; border: 1px solid var(--line);
   background: var(--surface); color: var(--danger); }
+
+/* ── Finished to-dos: crossed out at the bottom of their list until cleared ── */
+.done-pile { display: grid; gap: 2px; }
+.done-head { display: flex; align-items: center; justify-content: space-between; min-height: 32px; }
+.done-head .link { padding: 4px 0; }
+.task-done-row { position: relative; overflow: hidden; list-style: none; transition: opacity .16s; }
+.task-done-row.leaving { opacity: 0; }
+.task.done { position: relative; background: var(--bg); transition: transform .16s; touch-action: pan-y; }
+.task.done .task-title { color: var(--muted); text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--muted) 60%, transparent); }
+.task.done input[type=checkbox] { opacity: .75; }
+.task.done .glance-x { margin-right: 0; }
+
+/* Today: swipeable "Needs you" rows and the day's finished to-dos */
+.need-slide { position: relative; display: flex; align-items: center; background: var(--surface); transition: transform .16s; touch-action: pan-y; }
+.need-slide > a { flex: 1; min-width: 0; }
+.need-slide.urgent { box-shadow: inset 3px 0 0 #c0392b; }
+.today-row.task-row.done .today-task { color: var(--muted); text-decoration: line-through; }
+.today-row.task-row.done input[type=checkbox] { opacity: .75; }
+
+/* Mail page: one line pointing at this tab's to-dos */
+.todo-pointer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 14px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  color: var(--text); text-decoration: none; font-weight: 500; }
+.todo-pointer:hover { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); }

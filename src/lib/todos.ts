@@ -160,7 +160,8 @@ export async function waitingByTab(): Promise<Map<string, number>> {
 
 // Today: the mail that needs you right now, from every tab — priority items (money, security,
 // what you marked always-important) and reminders whose time has come. Most urgent first.
-export async function loadNeedsYou(): Promise<{ thread: TodoThread; tabId: string | null }[]> {
+export type Need = { thread: TodoThread; tabId: string | null; canAct: boolean };
+export async function loadNeedsYou(): Promise<Need[]> {
   const [threads, accts] = await Promise.all([
     supabase.from('email_threads').select(COLS).eq('in_inbox', true).eq('status', 'classified')
       .or('priority.eq.true,snoozed_until.not.is.null')
@@ -174,5 +175,6 @@ export async function loadNeedsYou(): Promise<{ thread: TodoThread; tabId: strin
   return ((threads.data ?? []) as unknown as TodoThread[])
     .filter(t => effectiveBucket(t) === 3 && !t.last_from_me && !isSnoozed(t) && (t.priority || isResurfaced(t)))
     .sort((a, b) => rank(a) - rank(b))
-    .map(thread => ({ thread, tabId: thread.tab_id ?? home.get(thread.account_id) ?? null }));
+    // canAct: the mailbox is yours (or shared with you) — not just one email a rule shared
+    .map(thread => ({ thread, tabId: thread.tab_id ?? home.get(thread.account_id) ?? null, canAct: home.has(thread.account_id) }));
 }

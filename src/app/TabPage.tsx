@@ -6,8 +6,6 @@ import { ago, loadTabThreads, splitTodos, toLines, type TodoThread, threadPath }
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
 import GlanceRow from './todo/GlanceRow';
-import { DragGhost, useTaskDrag } from '../lib/useTaskDrag';
-import TaskList from './todo/TaskList';
 import * as tasksApi from '../lib/tasks';
 import { useOnRefresh } from '../lib/refresh';
 
@@ -31,11 +29,11 @@ type Toast = {
 
 const key = (t: Pick<TodoThread, 'account_id' | 'thread_id'>) => t.account_id + t.thread_id;
 
-export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) {
+export default function TabPage({ tab }: { tab: Tab }) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [inbox, setInbox] = useState<TodoThread[] | null>(null);
   const [glance, setGlance] = useState<TodoThread[]>([]);
-  const [tasks, setTasks] = useState<tasksApi.Task[]>([]);
+  const [todoCount, setTodoCount] = useState(0); // the list itself lives on the To-Do tab
   const [error, setError] = useState('');
   const [showAll, setShowAll] = useState(false);
   const [showGlance, setShowGlance] = useState(false);
@@ -43,21 +41,12 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
-  // Drag a to-do up or down to rearrange this tab's list (moving to another list: the To-Do page)
-  const { drag, press } = useTaskDrag((task, spot) => {
-    if (spot.list !== tab.id) return;
-    const { next, changes } = tasksApi.placeTask(tasks, task, spot);
-    if (!changes.length) return;
-    setTasks(next);
-    tasksApi.saveChanges(changes).catch(() => load());
-  });
-
   const load = useCallback(async () => {
     try {
       // Every mailbox you can use (rule-routed mail can come from any of them); this tab's are a subset
-      const [accts, taskList] = await Promise.all([loadAccounts(), tasksApi.loadTasks(tab.id)]);
+      const [accts, count] = await Promise.all([loadAccounts(), tasksApi.countOpen(tab.id)]);
       setAccounts(accts);
-      setTasks(taskList);
+      setTodoCount(count);
       const r = await loadTabThreads(accts.filter(a => a.default_tab_id === tab.id).map(a => a.id), tab.id);
       setInbox(r.inbox);
       setGlance(r.glance);
@@ -100,7 +89,7 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
           title: a.todo.title, due_on: a.todo.due_on, tab_id: t.tab_id ?? acct?.default_tab_id ?? tab.id,
           account_id: t.account_id, thread_id: t.thread_id,
         });
-        if (task.tab_id === tab.id) setTasks(list => [...list, task]);
+        if (task.tab_id === tab.id) setTodoCount(n => n + 1);
         if (!a.todo.alsoDone) {
           show({ text: 'Added to To-Do', logIds: [], kind: 'todo', at: Date.now() });
           return;
@@ -184,40 +173,6 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   }
 
   // ── To-Do items ──
-  async function addTask(title: string) {
-    try {
-      const task = await tasksApi.addTask({ title, tab_id: tab.id });
-      setTasks(list => [...list, task]);
-    } catch (e) {
-      show({ text: `Couldn't add that (${e instanceof Error ? e.message : 'failed'}).`, logIds: [], kind: 'error', at: Date.now(), error: true });
-      throw e;
-    }
-  }
-  async function taskDone(task: tasksApi.Task) {
-    setTasks(list => list.filter(x => x.id !== task.id));
-    try {
-      await tasksApi.setDone(task.id, true);
-      show({ text: `Done: ${task.title}`, logIds: [], kind: 'task', at: Date.now(), undoFn: () => tasksApi.setDone(task.id, false) });
-    } catch { load(); }
-  }
-  async function taskEdit(task: tasksApi.Task, change: tasksApi.TaskChange) {
-    const moved = change.tab_id && change.tab_id !== tab.id;
-    setTasks(list => (moved ? list.filter(x => x.id !== task.id) : list.map(x => (x.id === task.id ? { ...x, ...change } : x))));
-    try {
-      await tasksApi.updateTask(task.id, change);
-      if (moved) {
-        const to = tabs.find(t => t.id === change.tab_id)?.name ?? 'the other list';
-        show({ text: `Moved to ${to}`, logIds: [], kind: 'todo', at: Date.now(),
-               undoFn: async () => { await tasksApi.updateTask(task.id, { tab_id: tab.id }); await load(); } });
-      }
-    } catch { show({ text: 'Couldn’t move it — try again', logIds: [], kind: 'todo', at: Date.now(), error: true }); load(); }
-  }
-  async function taskDelete(task: tasksApi.Task) {
-    if (!confirm(`Delete "${task.title}"?`)) return;
-    setTasks(list => list.filter(x => x.id !== task.id));
-    await tasksApi.deleteTask(task.id).catch(() => load());
-  }
-
   async function wake(t: TodoThread) {
     optimistic(t, { snoozed_until: null });
     await act.unsnooze(t).catch(() => load());
@@ -232,11 +187,17 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   if (error) return <p className="error">{error}</p>;
   if (!accounts || !inbox) return <p className="muted">Loading…</p>;
 
+  // To-dos have their own tab now; here, just a one-line pointer to this list
+  const todoLink = todoCount > 0 && (
+    <Link className="todo-pointer" to="/todos">
+      <span>✓ {todoCount} to-do{todoCount === 1 ? '' : 's'} on this list</span><span className="chev" aria-hidden>›</span>
+    </Link>
+  );
+
   if (tabAccounts.length === 0 && inbox.length === 0 && glance.length === 0) {
     return (
       <div className="stack-lg">
-        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs}
-                  listId={tab.id} onPress={press} over={drag?.over} draggingId={drag?.task.id} />
+        {todoLink}
         <p className="muted small">No mail on this tab yet. (Add an account here in Settings, or a rule that sends mail here.)</p>
       </div>
     );
@@ -248,8 +209,7 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
 
   return (
     <div className="stack-lg">
-      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs}
-                  listId={tab.id} onPress={press} over={drag?.over} draggingId={drag?.task.id} />
+      {todoLink}
 
       {lines.length === 0 ? (
         <section className="caught-up" aria-label={tab.name}>
@@ -329,7 +289,6 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
         </section>
       )}
 
-      <DragGhost drag={drag} />
       {toast && (
         <div className={toast.error ? 'toast error' : 'toast'} role="status">
           <span>{toast.text}</span>

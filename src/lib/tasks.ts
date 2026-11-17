@@ -48,10 +48,28 @@ export async function addTask(t: {
   return data as Task;
 }
 
+// Ticking a to-do off keeps it on its list (crossed out, at the bottom) until you clear it
 export async function setDone(id: string, done: boolean) {
   const { error } = await supabase.from('tasks').update({ done_at: done ? new Date().toISOString() : null }).eq('id', id);
   if (error) throw error;
 }
+
+// Clear finished items off the list (kept in the database; `false` brings them back — Undo)
+export async function setCleared(ids: string[], cleared: boolean) {
+  if (!ids.length) return;
+  const { error } = await supabase.from('tasks').update({ cleared_at: cleared ? new Date().toISOString() : null }).in('id', ids);
+  if (error) throw error;
+}
+
+// How many open to-dos a tab's list has (the Mail screen's one-line pointer to the To-Do page)
+export async function countOpen(tabId: string): Promise<number> {
+  const { count, error } = await supabase.from('tasks').select('id', { count: 'exact', head: true })
+    .eq('tab_id', tabId).is('done_at', null);
+  if (error) throw error;
+  return count ?? 0;
+}
+
+export const isDone = (t: Task) => !!t.done_at;
 
 export type TaskChange = Partial<Pick<Task, 'title' | 'due_on' | 'notes' | 'tab_id' | 'sort_order'>>;
 
@@ -94,9 +112,12 @@ export function dueLabel(due: string | null): { text: string; late: boolean } | 
   return { text: d.toLocaleDateString([], days < 6 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }), late: false };
 }
 
-// Every open item you can see, across all tabs (yours + Shared) — for the To-Do page
+// Every item you can see, across all tabs (yours + Shared) — for the To-Do page and Today.
+// Open ones, plus the ones you finished in the last 7 days and haven't cleared (your "done" pile).
 export async function loadAllTasks(): Promise<Task[]> {
-  const { data, error } = await supabase.from('tasks').select(COLS).is('done_at', null)
+  const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const { data, error } = await supabase.from('tasks').select(COLS).is('cleared_at', null)
+    .or(`done_at.is.null,done_at.gte.${weekAgo}`)
     .order('sort_order', { ascending: true, nullsFirst: false })
     .order('due_on', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false });

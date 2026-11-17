@@ -20,7 +20,9 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
   // Drag a whole row: rearrange within its list, or drop it on another list
   const { drag, press } = useTaskDrag((task, spot) => {
     if (!tasks) return;
-    const { next, changes } = tasksApi.placeTask(tasks, task, spot);
+    // only open items have a place in the order; finished ones ride along untouched
+    const { next: placed, changes } = tasksApi.placeTask(tasks.filter(t => !t.done_at), task, spot);
+    const next = [...placed, ...tasks.filter(t => t.done_at)];
     if (!changes.length) return;
     const before = changes.map(c => {
       const was = tasks.find(t => t.id === c.id)!;
@@ -55,20 +57,26 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
     timer.current = window.setTimeout(() => setToast(null), 7000);
   };
 
-  const byTab = useMemo(() => {
+  const open = useMemo(() => (tasks ?? []).filter(t => !t.done_at), [tasks]);
+  // newest finished first
+  const finished = useMemo(() => (tasks ?? []).filter(t => t.done_at)
+    .sort((a, b) => b.done_at!.localeCompare(a.done_at!)), [tasks]);
+  const group = (list: tasksApi.Task[]) => {
     const m = new Map<string, tasksApi.Task[]>();
-    for (const t of tasks ?? []) if (t.tab_id) m.set(t.tab_id, [...(m.get(t.tab_id) ?? []), t]);
+    for (const t of list) if (t.tab_id) m.set(t.tab_id, [...(m.get(t.tab_id) ?? []), t]);
     return m;
-  }, [tasks]);
+  };
+  const byTab = useMemo(() => group(open), [open]);
+  const doneByTab = useMemo(() => group(finished), [finished]);
 
   const today = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local
-  const overdue = (tasks ?? []).filter(t => t.due_on && t.due_on < today).length;
-  const dueToday = (tasks ?? []).filter(t => t.due_on === today).length;
+  const overdue = open.filter(t => t.due_on && t.due_on < today).length;
+  const dueToday = open.filter(t => t.due_on === today).length;
 
   if (error) return <p className="error">{error}</p>;
   if (!tasks) return <p className="muted">Loading…</p>;
 
-  const busy = tabs.filter(t => byTab.has(t.id) || waiting.get(t.id) || opened.has(t.id));
+  const busy = tabs.filter(t => byTab.has(t.id) || doneByTab.has(t.id) || waiting.get(t.id) || opened.has(t.id));
   const quiet = tabs.filter(t => !busy.includes(t));
 
   // Same moves as a tab's list; changes apply here and on the tab
@@ -76,10 +84,21 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
     const t = await tasksApi.addTask({ title, tab_id: tab.id });
     setTasks(list => [...(list ?? []), t]);
   };
+  // Ticked off: it stays, crossed out, at the bottom of its list until you clear it
   const done = (t: tasksApi.Task) => {
-    setTasks(list => list?.filter(x => x.id !== t.id) ?? null);
+    setTasks(list => list?.map(x => (x.id === t.id ? { ...x, done_at: new Date().toISOString() } : x)) ?? null);
     tasksApi.setDone(t.id, true).catch(() => { show('Couldn’t save — try again'); load(); });
-    show(`Done: ${t.title}`, async () => { await tasksApi.setDone(t.id, false); await load(); });
+  };
+  const undone = (t: tasksApi.Task) => {
+    setTasks(list => list?.map(x => (x.id === t.id ? { ...x, done_at: null } : x)) ?? null);
+    tasksApi.setDone(t.id, false).catch(() => { show('Couldn’t save — try again'); load(); });
+  };
+  const clear = (ts: tasksApi.Task[]) => {
+    const ids = ts.map(t => t.id);
+    setTasks(list => list?.filter(x => !ids.includes(x.id)) ?? null);
+    tasksApi.setCleared(ids, true).catch(() => { show('Couldn’t clear — try again'); load(); });
+    show(ids.length > 1 ? `Cleared ${ids.length} finished to-dos` : `Cleared: ${ts[0].title}`,
+      async () => { await tasksApi.setCleared(ids, false); await load(); });
   };
   const edit = (t: tasksApi.Task, change: tasksApi.TaskChange) => {
     setTasks(list => list?.map(x => (x.id === t.id ? { ...x, ...change } : x)) ?? null);
@@ -104,7 +123,8 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
     <div className="stack-lg">
       <div>
         <p className="muted small">
-          {tasks.length === 0 ? 'Nothing on your list.' : `${tasks.length} open`}
+          {tasks.length === 0 ? 'Nothing on your list.' : `${open.length} open`}
+          {finished.length > 0 && <> · {finished.length} done</>}
           {overdue > 0 && <> · <span className="task-due late">{overdue} overdue</span></>}
           {dueToday > 0 && <> · {dueToday} due today</>}
         </p>
@@ -113,8 +133,8 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
       {busy.map(tab => {
         const n = waiting.get(tab.id) ?? 0;
         return (
-          <TaskList key={tab.id} title={tab.name} tasks={byTab.get(tab.id) ?? []}
-                    onAdd={add(tab)} onDone={done} onEdit={edit} onDelete={remove} lists={tabs}
+          <TaskList key={tab.id} title={tab.name} tasks={byTab.get(tab.id) ?? []} done={doneByTab.get(tab.id) ?? []}
+                    onAdd={add(tab)} onDone={done} onUndone={undone} onClear={clear} onEdit={edit} onDelete={remove} lists={tabs}
                     listId={tab.id} onPress={press} over={drag?.over} draggingId={drag?.task.id}
                     extra={n > 0 && <Link className="waiting-link small" to={`/${tab.slug}`}>✉ {n} {n === 1 ? 'email' : 'emails'} waiting →</Link>} />
         );

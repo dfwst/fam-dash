@@ -2,13 +2,17 @@ import { useState, type ReactNode, type PointerEvent } from 'react';
 import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
 import { dueLabel, duePresets, type DropSpot, type Task, type TaskChange } from '../../lib/tasks';
+import { useSwipeAway } from '../../lib/useSwipeAway';
 
 export type ListOption = { id: string; name: string };
 
-// The tab's To-Do list: your own action items. Tick one off and it's gone (with an Undo).
+// One To-Do list: your own action items. Tick one off and it drops to the "Done" pile at the bottom.
 // Items made from an email keep a ✉ link back to it.
-export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [], listId, onPress, over, draggingId }: {
-  tasks: Task[];
+export default function TaskList({ tasks, done = [], onAdd, onDone, onUndone, onClear, onEdit, onDelete, title = 'To-Do', extra, lists = [], listId, onPress, over, draggingId }: {
+  tasks: Task[];          // open items, in order
+  done?: Task[];          // finished, not yet cleared — shown crossed out at the bottom
+  onUndone?: (t: Task) => void;
+  onClear?: (ts: Task[]) => void;
   title?: string;
   extra?: ReactNode; // shown beside the heading (the To-Do page's "N emails" link)
   onAdd: (title: string) => Promise<void>;
@@ -76,7 +80,34 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
                aria-label="Add a to-do" />
         {text.trim() && <button className="primary" disabled={saving}>Add</button>}
       </form>
+      {done.length > 0 && (
+        <div className="done-pile">
+          <div className="done-head">
+            <span className="muted small">Done · {done.length}</span>
+            {onClear && done.length > 1 && <button className="link small" onClick={() => onClear(done)}>Clear all</button>}
+          </div>
+          <ul className="task-list">
+            {done.map(t => <DoneRow key={t.id} t={t} onUndone={onUndone} onClear={onClear} />)}
+          </ul>
+        </div>
+      )}
     </section>
+  );
+}
+
+// A finished to-do: stays crossed out at the bottom of its list until you clear it
+// (✕, or swipe it away on the phone). Untick it to bring it back.
+function DoneRow({ t, onUndone, onClear }: { t: Task; onUndone?: (t: Task) => void; onClear?: (ts: Task[]) => void }) {
+  const s = useSwipeAway(() => onClear?.([t]), !!onClear);
+  return (
+    <li className={`task-done-row${s.leaving ? ' leaving' : ''}`}>
+      {s.dx !== 0 && <div className="glance-hint" aria-hidden>✓ Clear</div>}
+      <div className="task done" style={s.style} {...s.handlers}>
+        <input type="checkbox" checked aria-label={`Not done: ${t.title}`} onChange={() => onUndone?.(t)} />
+        <span className="task-title">{t.title}</span>
+        {onClear && <button className="glance-x" aria-label={`Clear: ${t.title}`} title="Clear from the list" onClick={s.dismiss}>✕</button>}
+      </div>
+    </li>
   );
 }
 

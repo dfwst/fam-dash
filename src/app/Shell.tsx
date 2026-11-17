@@ -178,7 +178,7 @@ export default function Shell() {
             <Route path="/" element={<Navigate to="/today" replace />} />
             <Route path="/today" element={<Today tabs={tabs} waiting={waiting} name={me.display_name} />} />
             <Route path="/mail" element={<Navigate to={`/${mailHome.slug}`} replace />} />
-            {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} tabs={tabs} />} />)}
+            {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
             <Route path="/todos" element={<AllTodos tabs={tabs} />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/review" element={<Review />} />

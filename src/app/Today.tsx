@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import * as tasksApi from '../lib/tasks';
-import { ago, isResurfaced, isUrgent, loadNeedsYou, threadPath, type TodoThread } from '../lib/todos';
+import { ago, isResurfaced, isUrgent, loadNeedsYou, threadPath, type Need } from '../lib/todos';
+import * as act from '../lib/actions';
+import { useSwipeAway } from '../lib/useSwipeAway';
 import { useOnRefresh } from '../lib/refresh';
 import type { Tab } from './Shell';
 
@@ -12,7 +14,7 @@ import type { Tab } from './Shell';
 export default function Today({ tabs, waiting, name }: {
   tabs: Tab[]; waiting: Map<string, number>; name: string | null;
 }) {
-  const [needs, setNeeds] = useState<{ thread: TodoThread; tabId: string | null }[] | null>(null);
+  const [needs, setNeeds] = useState<Need[] | null>(null);
   const [tasks, setTasks] = useState<tasksApi.Task[]>([]);
   const [error, setError] = useState('');
   const [toast, setToast] = useState<{ text: string; undo?: () => Promise<unknown> } | null>(null);
@@ -35,19 +37,32 @@ export default function Today({ tabs, waiting, name }: {
 
   const tabName = (id: string | null) => tabs.find(t => t.id === id)?.name;
   const today = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local
-  const due = tasks.filter(t => t.due_on && t.due_on <= today).sort((a, b) => a.due_on!.localeCompare(b.due_on!));
-  const later = tasks.length - due.length;
+  const open = tasks.filter(t => !t.done_at);
+  const due = open.filter(t => t.due_on && t.due_on <= today).sort((a, b) => a.due_on!.localeCompare(b.due_on!));
+  // What you ticked off today stays in view, crossed out — the day's wins
+  const doneToday = tasks.filter(t => t.done_at && new Date(t.done_at).toLocaleDateString('en-CA') === today);
+  const later = open.length - due.length;
   const withMail = tabs.filter(t => (waiting.get(t.id) ?? 0) > 0);
   const hour = new Date().getHours();
   const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const allClear = needs.length === 0 && due.length === 0 && withMail.length === 0;
+  const allClear = needs.length === 0 && due.length === 0 && doneToday.length === 0 && withMail.length === 0;
 
-  const done = (t: tasksApi.Task) => {
-    setTasks(list => list.filter(x => x.id !== t.id));
-    tasksApi.setDone(t.id, true).catch(() => load());
-    setToast({ text: `Done: ${t.title}`, undo: async () => { await tasksApi.setDone(t.id, false); await load(); } });
+  const say = (text: string, undo?: () => Promise<unknown>) => {
+    setToast({ text, undo });
     window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setToast(null), 7000);
+  };
+  const setDone = (t: tasksApi.Task, isDone: boolean) => {
+    setTasks(list => list.map(x => (x.id === t.id ? { ...x, done_at: isDone ? new Date().toISOString() : null } : x)));
+    tasksApi.setDone(t.id, isDone).catch(() => load());
+  };
+  // Clear an email without opening it = Done (archived, with Undo)
+  const clearMail = async (n: Need) => {
+    setNeeds(list => list?.filter(x => x !== n) ?? null);
+    try {
+      const r = await act.done(n.thread);
+      say('Done · archived', async () => { await act.undo(r.logId); await load(); });
+    } catch { say('Couldn’t do that — try again'); load(); }
   };
 
   return (
@@ -69,25 +84,14 @@ export default function Today({ tabs, waiting, name }: {
         <section className="stack">
           <h3 className="section-title">Needs you</h3>
           <ul className="today-list">
-            {needs.map(({ thread: t, tabId }) => (
-              <li key={t.account_id + t.thread_id}>
-                <Link to={threadPath(t.account_id, t.thread_id)} className={isUrgent(t) ? 'today-row urgent' : 'today-row'}>
-                  <span className="today-row-top">
-                    {isUrgent(t) ? <span className="badge urgent">{t.category === 'security' ? 'Security' : 'Payment'}</span>
-                      : isResurfaced(t) ? <span className="badge back">Reminder</span>
-                      : <span className="badge soft">Priority</span>}
-                    <span className="today-from">{t.from_name || t.from_email}</span>
-                    <span className="todo-meta">{[tabName(tabId), ago(t.last_message_at)].filter(Boolean).join(' · ')}</span>
-                  </span>
-                  <span className="today-text">{t.summary || t.subject}</span>
-                </Link>
-              </li>
+            {needs.map(n => (
+              <NeedRow key={n.thread.account_id + n.thread.thread_id} n={n} tab={tabName(n.tabId)} onClear={() => clearMail(n)} />
             ))}
           </ul>
         </section>
       )}
 
-      {due.length > 0 && (
+      {(due.length > 0 || doneToday.length > 0) && (
         <section className="stack">
           <h3 className="section-title">Due</h3>
           <ul className="today-list">
@@ -95,7 +99,7 @@ export default function Today({ tabs, waiting, name }: {
               const d = tasksApi.dueLabel(t.due_on);
               return (
                 <li key={t.id} className="today-row task-row">
-                  <input type="checkbox" aria-label={`Done: ${t.title}`} onChange={() => done(t)} />
+                  <input type="checkbox" aria-label={`Done: ${t.title}`} onChange={() => setDone(t, true)} />
                   <span className="today-task">{t.title}</span>
                   <span className="todo-meta">
                     {tabName(t.tab_id)}{d && <> · <span className={d.late ? 'task-due late' : 'task-due'}>{d.text}</span></>}
@@ -103,6 +107,13 @@ export default function Today({ tabs, waiting, name }: {
                 </li>
               );
             })}
+            {doneToday.map(t => (
+              <li key={t.id} className="today-row task-row done">
+                <input type="checkbox" checked aria-label={`Not done: ${t.title}`} onChange={() => setDone(t, false)} />
+                <span className="today-task">{t.title}</span>
+                <span className="todo-meta">{tabName(t.tab_id)}</span>
+              </li>
+            ))}
           </ul>
         </section>
       )}
@@ -135,6 +146,31 @@ export default function Today({ tabs, waiting, name }: {
         </div>
       )}
     </div>
+  );
+}
+
+// One "Needs you" email. Tap to read; swipe either way (phone) or ✕ to clear it without opening.
+function NeedRow({ n, tab, onClear }: { n: Need; tab?: string; onClear: () => void }) {
+  const t = n.thread;
+  const s = useSwipeAway(onClear, n.canAct);
+  return (
+    <li className={`glance-row${s.leaving ? ' leaving' : ''}`}>
+      {s.dx !== 0 && <div className="glance-hint" aria-hidden>✓ Clear</div>}
+      <div className={isUrgent(t) ? 'need-slide urgent' : 'need-slide'} style={s.style} {...s.handlers}>
+        <Link to={threadPath(t.account_id, t.thread_id)} className="today-row" draggable={false}
+              onClick={e => { if (s.swiped) e.preventDefault(); }}>
+          <span className="today-row-top">
+            {isUrgent(t) ? <span className="badge urgent">{t.category === 'security' ? 'Security' : 'Payment'}</span>
+              : isResurfaced(t) ? <span className="badge back">Reminder</span>
+              : <span className="badge soft">Priority</span>}
+            <span className="today-from">{t.from_name || t.from_email}</span>
+            <span className="todo-meta">{[tab, ago(t.last_message_at)].filter(Boolean).join(' · ')}</span>
+          </span>
+          <span className="today-text">{t.summary || t.subject}</span>
+        </Link>
+        {n.canAct && <button className="glance-x" aria-label={`Clear: ${t.subject ?? 'email'}`} title="Clear (archive)" onClick={s.dismiss}>✕</button>}
+      </div>
+    </li>
   );
 }
 
