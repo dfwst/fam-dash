@@ -49,7 +49,7 @@ export default function Settings() {
   const [error, setError] = useState('');
   const [imapFor, setImapFor] = useState<string | null>(null); // '' = new account, email = reconnect
   const [justConnected, setJustConnected] = useState('');
-  const [tabs, setTabs] = useState<{ id: string; name: string }[]>([]);
+  const [tabs, setTabs] = useState<{ id: string; name: string; slug: string; owner_id: string | null }[]>([]);
   const [notice, setNotice] = useState('');
   const [cleanupFor, setCleanupFor] = useState<string | null>(null);
   const [myId, setMyId] = useState('');
@@ -66,7 +66,7 @@ export default function Settings() {
         .maybeSingle().then(({ data }) => setMe(data as typeof me));
     });
     loadAccounts().then(setAccounts).catch(e => setError(e.message));
-    supabase.from('tabs').select('id, name').eq('is_active', true).order('sort_order')
+    supabase.from('tabs').select('id, name, slug, owner_id').eq('is_active', true).order('sort_order')
       .then(({ data }) => setTabs(data ?? []));
   }, []);
 
@@ -136,9 +136,15 @@ export default function Settings() {
   // Share an account with the household (its mail shows for everyone, on the tab you pick)
   async function setShared(a: Account, shared: boolean) {
     if (shared && !confirm(`Share ${a.email} with your household?\n\nEveryone in the household will see its mail, sorting and history.`)) return;
-    const { error } = await supabase.from('connected_accounts').update({ shared }).eq('id', a.id);
+    // Shared mail has to land on a tab everyone sees — move it off a private tab onto Shared
+    const onPrivate = !!tabs.find(t => t.id === a.default_tab_id)?.owner_id;
+    const sharedTab = tabs.find(t => !t.owner_id && t.slug === 'shared') ?? tabs.find(t => !t.owner_id);
+    const move = shared && onPrivate && sharedTab ? { default_tab_id: sharedTab.id } : {};
+    const { error } = await supabase.from('connected_accounts').update({ shared, ...move }).eq('id', a.id);
     if (error) return setError(error.message);
-    setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, shared } : x)) ?? null);
+    setAccounts(list => list?.map(x => (x.id === a.id
+      ? { ...x, shared, ...(sharedTab && 'default_tab_id' in move ? { default_tab_id: sharedTab.id, tabs: { name: sharedTab.name } } : {}) }
+      : x)) ?? null);
   }
 
   return (
@@ -191,7 +197,7 @@ export default function Settings() {
                 <button className="acct-head" aria-expanded={openAcct === a.id} onClick={() => setOpenAcct(o => (o === a.id ? null : a.id))}>
                   <span className="row-title ellipsis">{a.email}</span>
                   <span className="muted small">
-                    {serviceName(a)} · {a.tabs?.name ?? 'no tab'}{a.nickname ? ` · “${a.nickname}”` : ''}{a.shared ? ' · shared' : ''}
+                    {serviceName(a)} · {a.tabs?.name ?? (a.default_tab_id ? 'their tab' : 'no tab')}{a.nickname ? ` · “${a.nickname}”` : ''}{a.shared ? ' · shared' : ''}
                   </span>
                   <span className="acct-chevron" aria-hidden>{openAcct === a.id ? '▴' : '▾'}</span>
                 </button>
@@ -204,7 +210,8 @@ export default function Settings() {
                   <span className="muted small">Shows on tab</span>
                   <select value={a.default_tab_id ?? ''} onChange={e => setTab(a, e.target.value)}>
                     {!a.default_tab_id && <option value="">— none —</option>}
-                    {tabs.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    {/* a shared account can only show on a tab everyone sees */}
+                    {tabs.filter(t => !a.shared || !t.owner_id || t.id === a.default_tab_id).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
                   </select>
                 </label>
                 <label className="policy">
