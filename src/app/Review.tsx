@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { threadPath } from '../lib/todos';
 import { supabase } from '../lib/supabase';
 import { callFn } from '../lib/functions';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { loadAccounts, type Account } from '../lib/accounts';
 import Activity from './Activity';
 
@@ -67,7 +67,19 @@ const wouldArchive = (t: Thread, a?: Account) => {
 // What the next sync will actually archive, given each account's real policy
 const willArchive = (t: Thread, a?: Account) => !!a && a.policy !== 'read_only' && wouldArchive(t, a);
 
+// Four jobs, one at a time: check the sorting, see what rlyfe did, what it learned, and sync status
+const VIEWS = [
+  { id: 'sort', label: 'Sort' },
+  { id: 'activity', label: 'Activity' },
+  { id: 'learned', label: 'Learned' },
+  { id: 'sync', label: 'Sync' },
+] as const;
+type ViewId = typeof VIEWS[number]['id'];
+
 export default function Review() {
+  const [params, setParams] = useSearchParams();
+  const view: ViewId = VIEWS.some(v => v.id === params.get('s')) ? params.get('s') as ViewId : 'sort';
+  const go = (id: ViewId) => setParams(id === 'sort' ? {} : { s: id }, { replace: true });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [threads, setThreads] = useState<Thread[] | null>(null);
   const [runs, setRuns] = useState<Run[]>([]);
@@ -246,199 +258,204 @@ export default function Review() {
 
   // Latest run per account
   const latest = accounts.map(a => ({ a, r: runs.find(r => r.account_id === a.id) }));
+  const lastSync = runs.find(r => r.status === 'ok' || r.finished_at)?.finished_at;
+  const cleaning = accounts.filter(a => a.policy !== 'read_only').length;
+
+  // The Real / Glance / Junk control. `marked` = the one already chosen (rlyfe's sort, or yours).
+  const seg = (marked: 1 | 2 | 3 | null, how: 'sorted' | 'yours', onPick: (b: 1 | 2 | 3) => void, disabled = false, label = 'Sort') => (
+    <div className="seg" role="group" aria-label={label}>
+      {([3, 2, 1] as const).map(b => (
+        <button key={b} disabled={disabled} onClick={() => onPick(b)}
+                className={marked === b ? `seg-btn is-${how}` : 'seg-btn'}>
+          {marked === b && how === 'sorted' ? `✓ ${BUCKET_LABEL[b]}` : BUCKET_LABEL[b]}
+        </button>
+      ))}
+    </div>
+  );
 
   return (
-    <section className="stack-lg">
-      <div className="stack">
-        <div className="section-head">
-          <h2>Review sorting</h2>
-          <button className="pill" disabled={syncing || running} onClick={syncNow}>
-            {running ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'}
+    <section className="stack">
+      <nav className="subnav" aria-label="Review sections">
+        {VIEWS.map(v => (
+          <button key={v.id} className={view === v.id ? 'subnav-item active' : 'subnav-item'}
+                  aria-current={view === v.id ? 'page' : undefined} onClick={() => go(v.id)}>
+            {v.label}{v.id === 'sort' && counts.check > 0 && <span className="tab-count"> {counts.check}</span>}
           </button>
-        </div>
-        {accounts.every(a => a.policy === 'read_only') ? (
-          <p className="notice">
-            Shadow mode: the morning sync doesn't change your mail. {counts.archive} of {counts.all} inbox threads would be archived.
-            Turn on cleanup per account in Settings.
-          </p>
-        ) : (
-          <p className="notice">
-            Cleanup is on for {accounts.filter(a => a.policy !== 'read_only').length} account(s).
-            The next sync will archive {counts.willArchive} threads still sitting in the inbox. Anything archived shows below under Activity.
-          </p>
-        )}
-        {error && <p className="error">{error}</p>}
-        {learnedMsg && <p className="notice" onClick={() => setLearnedMsg('')}>{learnedMsg}</p>}
+        ))}
+      </nav>
+      {error && <p className="error">{error}</p>}
 
-        <ul className="list">
-          {latest.map(({ a, r }) => (
-            <li key={a.id} className="row">
-              <div className="row-main">
-                <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">
-                  {!r ? 'Not synced yet'
-                    : r.status === 'running' ? `Syncing… ${r.stats.sorted ?? 0} sorted so far`
-                    : r.status === 'error' ? `Failed ${ago(r.started_at)}: ${r.error}`
-                    : `${ago(r.finished_at ?? r.started_at)} · ${r.stats.inbox_threads ?? 0} in inbox · `
-                      + `${r.stats.by_rule ?? 0} by rule, ${r.stats.by_ai ?? 0} by AI · ${money(r.stats.cost_usd ?? 0)}`}
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-        <p className="muted small">Claude cost this month: {money(monthCost)}</p>
-      </div>
+      {view === 'sort' && (
+        <div className="stack">
+          <header className="today-hero">
+            <h2 className="today-hello">
+              {!threads ? 'Checking…' : counts.check === 0 ? 'Nothing to check.' : `${counts.check} to check`}
+            </h2>
+            <p className="today-sum">
+              {counts.check === 0 ? 'rlyfe is sorting the way you would.' : 'Confirm or fix how rlyfe sorted these. It learns from each tap.'}
+              {checkedNow > 0 && <> · <span className="today-won">{checkedNow} checked just now</span></>}
+            </p>
+          </header>
 
-      <div className="stack">
-        <div className="chips">
-          {([['To check', 'check'], ['Real', 3], ['Glance', 2], ['Junk', 1]] as const)
-            .map(([label, f]) => (
-              <button key={label} className={filter === f ? 'chip active' : 'chip'} onClick={() => { setFilter(f); setLearnedMsg(''); }}>
-                {label} <span className="muted">{counts[f]}</span>
-              </button>
-            ))}
-        </div>
+          <div className="chips">
+            {([['To check', 'check'], ['Real', 3], ['Glance', 2], ['Junk', 1]] as const)
+              .map(([label, f]) => (
+                <button key={label} className={filter === f ? 'chip active' : 'chip'} onClick={() => { setFilter(f); setLearnedMsg(''); }}>
+                  {label} <span className="tab-count">{counts[f]}</span>
+                </button>
+              ))}
+          </div>
 
-        {filter === 'check' ? (
-          <p className="muted small">
-            {counts.check} Junk &amp; Glance left to check{checkedNow ? ` · ${checkedNow} checked just now` : ''}.
-            One tap on a company card sorts all of it. ✓ marks how rlyfe sorted it. Nothing here changes your mail.
-          </p>
-        ) : (
-          <p className="muted small">
-            Checked as {BUCKET_LABEL[filter]}. Tap {BUCKET_LABEL[filter]} again to send one back to “To check”, or another bucket to move it.
-          </p>
-        )}
+          {learnedMsg && <p className="notice" onClick={() => setLearnedMsg('')}>{learnedMsg}</p>}
+          {groupUndo && (
+            <p className="notice undo-line">
+              <span>{groupUndo.text}</span>
+              <button className="link" onClick={undoGroup}>Undo</button>
+            </p>
+          )}
+          {filter !== 'check' && shown.length > 0 && (
+            <p className="muted small hint">
+              You checked these as {BUCKET_LABEL[filter]}. Tap {BUCKET_LABEL[filter]} again to send one back, or another to move it.
+            </p>
+          )}
 
-        {groupUndo && (
-          <p className="notice undo-line">
-            <span>{groupUndo.text}</span>
-            <button className="link" onClick={undoGroup}>Undo</button>
-          </p>
-        )}
-
-        {!threads ? <p className="muted">Loading…</p>
-          : shown.length === 0 ? (
-            filter === 'check'
-              ? <p className="notice">Nothing to check — rlyfe is sorting the way you would.</p>
-              : <p className="muted">Nothing checked as {BUCKET_LABEL[filter]} yet.</p>
-          ) : filter === 'check' ? (
-            <ul className="list">
-              {groups.map(g => {
-                if (g.threads.length === 1) return renderRow(g.threads[0]);
-                const n1 = g.threads.filter(t => effective(t) === 1).length;
-                const n2 = g.threads.length - n1;
-                const major: 1 | 2 = n1 >= n2 ? 1 : 2;
-                const names = [...new Set(g.threads.map(t => t.from_name || t.from_email))].slice(0, 3).join(', ');
-                const isOpen = open.has(g.key);
-                return [
-                  <li key={`g:${g.key}`} className="row review-row group-card">
-                    <div className="row-main">
-                      <div className="row-top">
-                        <span className="row-title ellipsis">{g.key}</span>
-                        <span className="muted small push">{g.threads.length} emails</span>
+          {!threads ? <div className="skel" style={{ height: 120 }} />
+            : shown.length === 0 ? (
+              filter === 'check' ? (
+                <section className="caught-up">
+                  <div className="check" aria-hidden>✓</div>
+                  <h2>All checked.</h2>
+                  <p className="muted small">New mail shows up here after the next sync.</p>
+                </section>
+              ) : <p className="muted hint">Nothing checked as {BUCKET_LABEL[filter]} yet.</p>
+            ) : filter === 'check' ? (
+              <ul className="review-cards">
+                {groups.map(g => {
+                  if (g.threads.length === 1) return renderRow(g.threads[0]);
+                  const n1 = g.threads.filter(t => effective(t) === 1).length;
+                  const n2 = g.threads.length - n1;
+                  const major: 1 | 2 = n1 >= n2 ? 1 : 2;
+                  const names = [...new Set(g.threads.map(t => t.from_name || t.from_email))].slice(0, 3).join(', ');
+                  const isOpen = open.has(g.key);
+                  return (
+                    <li key={`g:${g.key}`} className="review-card group">
+                      <div className="review-top">
+                        <span className="review-from">{g.key}</span>
+                        <span className="review-count">{g.threads.length} emails</span>
                       </div>
-                      <div className="muted small">
-                        rlyfe sorted {[n1 && `${n1} Junk`, n2 && `${n2} Glance`].filter(Boolean).join(' · ')}
+                      <div className="review-sub">{names}</div>
+                      <div className="review-why">
+                        rlyfe sorted {[n1 && `${n1} as Junk`, n2 && `${n2} as Glance`].filter(Boolean).join(', ')}
+                        {g.isDomain ? '. One tap sorts them all, and future mail from here.' : '. One tap sorts them all.'}
                       </div>
-                      <div className="small ellipsis">{names}</div>
+                      {seg(major, 'sorted', b => groupPick(g, b), false, `Sort all of ${g.key}`)}
                       <button className="link small show-each"
                               onClick={() => setOpen(s => { const n = new Set(s); if (n.has(g.key)) n.delete(g.key); else n.add(g.key); return n; })}>
-                        {isOpen ? 'Hide' : 'Show each'}
+                        {isOpen ? 'Hide emails' : `Show the ${g.threads.length} emails`}
                       </button>
-                    </div>
-                    <div className="bucket-pick" aria-label={`Sort all of ${g.key}`}>
-                      {([3, 2, 1] as const).map(b => (
-                        <button key={b} className={['bp', b === major ? 'is-sorted' : ''].join(' ')}
-                                title={`All ${g.threads.length} → ${BUCKET_LABEL[b]}`}
-                                onClick={() => groupPick(g, b)}>
-                          {b === major ? `✓ ${BUCKET_LABEL[b]}` : BUCKET_LABEL[b]}
-                        </button>
-                      ))}
-                    </div>
-                  </li>,
-                  ...(isOpen ? g.threads.map(t => renderRow(t, true)) : []),
-                ];
-              })}
-            </ul>
+                      {isOpen && <ul className="review-nested">{g.threads.map(t => renderRow(t, true))}</ul>}
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : (
+              <ul className="review-cards">
+                {shown.map(t => renderRow(t))}
+              </ul>
+            )}
+        </div>
+      )}
+
+      {view === 'activity' && <Activity accounts={byId} />}
+
+      {view === 'learned' && (
+        <div className="stack">
+          <p className="muted small hint">Senders rlyfe always sorts the same way, because you told it to. Forget one to go back to normal sorting.</p>
+          {prefs.length === 0 && domainPrefs.length === 0 ? (
+            <p className="muted hint">Nothing yet. Check a few emails under Sort and rlyfe remembers those senders.</p>
           ) : (
             <ul className="list">
-              {shown.map(t => renderRow(t))}
+              {domainPrefs.map(d => (
+                <li key={`d:${d.domain}`} className="row">
+                  <div className="row-main">
+                    <div className="row-title ellipsis">{d.domain}</div>
+                    <div className="muted small">Everything from this company → {BUCKET_LABEL[d.bucket]}</div>
+                  </div>
+                  <button className="link" onClick={() => forgetDomain(d.domain)}>Forget</button>
+                </li>
+              ))}
+              {prefs.map(p => (
+                <li key={p.sender_email} className="row">
+                  <div className="row-main">
+                    <div className="row-title ellipsis">{p.sender_email}</div>
+                    <div className="muted small">Always {BUCKET_LABEL[p.bucket]}</div>
+                  </div>
+                  <button className="link" onClick={() => forget(p)}>Forget</button>
+                </li>
+              ))}
             </ul>
           )}
-      </div>
+        </div>
+      )}
 
-      <Activity accounts={byId} />
-
-      <div className="stack">
-        <h3>What rlyfe has learned</h3>
-        {prefs.length === 0 && domainPrefs.length === 0 ? (
-          <p className="muted small">Nothing yet. Check a few emails above and rlyfe remembers those senders.</p>
-        ) : (
+      {view === 'sync' && (
+        <div className="stack">
+          <header className="today-hero">
+            <h2 className="today-hello">{running ? 'Syncing…' : lastSync ? `Synced ${ago(lastSync)}` : 'Not synced yet'}</h2>
+            <p className="today-sum">
+              {cleaning === 0
+                ? `Cleanup is off, so syncing never changes your mail. ${counts.archive} of ${counts.all} inbox emails would be archived if it were on.`
+                : `Cleanup is on for ${cleaning} account${cleaning === 1 ? '' : 's'}. The next sync will archive ${counts.willArchive} Junk and Glance email${counts.willArchive === 1 ? '' : 's'}. Real mail always stays.`}
+            </p>
+          </header>
+          <button className="primary sync-btn" disabled={syncing || running} onClick={syncNow}>
+            {running ? 'Syncing…' : syncing ? 'Starting…' : 'Sync now'}
+          </button>
           <ul className="list">
-            {domainPrefs.map(d => (
-              <li key={`d:${d.domain}`} className="row">
+            {latest.map(({ a, r }) => (
+              <li key={a.id} className="row">
                 <div className="row-main">
-                  <div className="ellipsis">Everything from {d.domain}</div>
-                  <div className="muted small">Always {BUCKET_LABEL[d.bucket]} · company-wide</div>
-                </div>
-                <button className="link" onClick={() => forgetDomain(d.domain)}>Forget</button>
-              </li>
-            ))}
-            {prefs.map(p => (
-              <li key={p.sender_email} className="row">
-                <div className="row-main">
-                  <div className="ellipsis">{p.sender_email}</div>
-                  <div className="muted small">
-                    Always {BUCKET_LABEL[p.bucket]} · from {p.votes_1 + p.votes_2 + p.votes_3} check{p.votes_1 + p.votes_2 + p.votes_3 > 1 ? 's' : ''}
+                  <div className="row-title ellipsis">{a.email}</div>
+                  <div className={r?.status === 'error' ? 'small error' : 'muted small'}>
+                    {!r ? 'Not synced yet'
+                      : r.status === 'running' ? `Syncing… ${r.stats.sorted ?? 0} sorted so far`
+                      : r.status === 'error' ? `Failed ${ago(r.started_at)}: ${r.error}`
+                      : `${ago(r.finished_at ?? r.started_at)} · ${r.stats.inbox_threads ?? 0} in inbox`}
                   </div>
                 </div>
-                <button className="link" onClick={() => forget(p)}>Forget</button>
+                {r?.status === 'running' ? <span className="pill">Syncing</span>
+                  : r?.status === 'error' ? <span className="pill warn">Failed</span>
+                  : r ? <span className="sync-ok" aria-label="Synced">✓</span> : null}
               </li>
             ))}
           </ul>
-        )}
-      </div>
+          <p className="muted small hint">Sorting with Claude has cost {money(monthCost)} this month.</p>
+        </div>
+      )}
     </section>
   );
 
-  // One thread row (used in every list; nested = shown under an expanded group card)
+  // One email (in every list; nested = inside an opened company card)
   function renderRow(t: Thread, nested = false) {
-                const acct = byId.get(t.account_id);
-                const k = t.account_id + t.thread_id;
-                return (
-                  <li key={k} className={['row review-row', nested ? 'nested' : '', leaving.has(k) ? 'leaving' : ''].join(' ')}>
-                    <div className="row-main">
-                      <div className="row-top">
-                        {t.priority && <span className="flag">Priority</span>}
-                        <Link className="row-title ellipsis" to={threadPath(t.account_id, t.thread_id)}>{t.from_name}</Link>
-                        <span className="muted small push">{t.last_message_at ? ago(t.last_message_at) : ''}</span>
-                      </div>
-                      <div className="ellipsis">{t.subject}</div>
-                      {t.summary && <div className="small">{t.summary}</div>}
-                      <div className="muted small">
-                        {{ rule: 'Rule', ai: 'AI', learned: 'Learned', fallback: 'Fallback' }[t.classified_by ?? 'fallback'] ?? 'Sorted'}: {t.reason}
-                        {t.last_from_me ? ' · you replied last' : ''}
-                        {acct ? ` · ${acct.email.split('@')[0]}` : ''}
-                        {wouldArchive(t, acct) ? ' · would archive' : ''}
-                      </div>
-                    </div>
-                    <div className="bucket-pick" aria-label="Correct the bucket">
-                      {([3, 2, 1] as const).map(b => {
-                        const mine = filter === 'check' ? t.bucket === b : effective(t) === b;
-                        return (
-                          <button key={b} disabled={leaving.has(k)}
-                            className={['bp', mine ? (filter === 'check' ? 'is-sorted' : 'is-yours') : ''].join(' ')}
-                            title={filter === 'check'
-                              ? (mine ? `Confirm ${BUCKET_LABEL[b]}` : `Change to ${BUCKET_LABEL[b]}`)
-                              : (mine ? 'Send back to To check' : `Move to ${BUCKET_LABEL[b]}`)}
-                            onClick={() => pick(t, b)}>
-                            {filter === 'check' && mine ? `✓ ${BUCKET_LABEL[b]}` : BUCKET_LABEL[b]}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </li>
-                );
+    const acct = byId.get(t.account_id);
+    const k = t.account_id + t.thread_id;
+    const b = effective(t);
+    return (
+      <li key={k} className={['review-card', nested ? 'nested' : '', leaving.has(k) ? 'leaving' : ''].join(' ')}>
+        <div className="review-top">
+          {t.priority && <span className="badge soft">Priority</span>}
+          <Link className="review-from" to={threadPath(t.account_id, t.thread_id)}>{t.from_name || t.from_email}</Link>
+          <span className="todo-meta">{t.last_message_at ? ago(t.last_message_at) : ''}</span>
+        </div>
+        <div className="review-sub">{t.subject}</div>
+        {t.summary && !nested && <div className="review-text">{t.summary}</div>}
+        <div className="review-why">
+          {b ? `Sorted ${BUCKET_LABEL[b]}` : 'Sorted'}{t.reason ? `: ${t.reason}` : ''}
+          {t.last_from_me ? ' · you replied last' : ''}
+          {acct ? ` · ${acct.nickname || acct.email.split('@')[0]}` : ''}
+        </div>
+        {seg(filter === 'check' ? t.bucket : b, filter === 'check' ? 'sorted' : 'yours', x => pick(t, x), leaving.has(k), 'Confirm or change')}
+      </li>
+    );
   }
 }

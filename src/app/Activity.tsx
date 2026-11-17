@@ -49,7 +49,7 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
   return (
     <div className="stack">
       <div className="section-head">
-        <h3>Activity · last 7 days</h3>
+        <h3 className="section-title">Last 7 days</h3>
         <div className="chips">
           <button className={only === 'sync' ? 'chip active' : 'chip'} onClick={() => setOnly('sync')}>Auto-archived</button>
           <button className={only === 'all' ? 'chip active' : 'chip'} onClick={() => setOnly('all')}>Everything</button>
