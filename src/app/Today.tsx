@@ -67,10 +67,15 @@ export default function Today({ tabs, waiting, name }: {
 
   return (
     <div className="stack-lg today">
-      <p className="today-hello">
-        {hello}{name ? `, ${name}` : ''}.
-        <span className="muted"> {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}</span>
-      </p>
+      <header className="today-hero">
+        <h2 className="today-hello">{hello}{name ? `, ${name}` : ''}.</h2>
+        <p className="today-sum">
+          {new Date().toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' })}
+          {needs.length > 0 && <> · {needs.length} need{needs.length === 1 ? 's' : ''} you</>}
+          {due.length > 0 && <> · {due.length} due</>}
+          {doneToday.length > 0 && <> · <span className="today-won">{doneToday.length} done today</span></>}
+        </p>
+      </header>
 
       {allClear && (
         <section className="caught-up">
@@ -93,7 +98,7 @@ export default function Today({ tabs, waiting, name }: {
 
       {(due.length > 0 || doneToday.length > 0) && (
         <section className="stack">
-          <h3 className="section-title">Due</h3>
+          <h3 className="section-title">{due.length > 0 ? "Due" : "Done today"}</h3>
           <ul className="today-list">
             {due.map(t => {
               const d = tasksApi.dueLabel(t.due_on);

@@ -29,6 +29,16 @@ export default function TaskList({ tasks, done = [], onAdd, onDone, onUndone, on
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
+  const [completing, setCompleting] = useState<Set<string>>(new Set()); // ticked, check animating
+
+  // Let the tick land before the row moves to the Done pile
+  const tick = (t: Task) => {
+    setCompleting(s => new Set(s).add(t.id));
+    window.setTimeout(() => {
+      onDone(t);
+      setCompleting(s => { const n = new Set(s); n.delete(t.id); return n; });
+    }, 380);
+  };
 
   async function add() {
     if (!text.trim() || saving) return;
@@ -49,17 +59,18 @@ export default function TaskList({ tasks, done = [], onAdd, onDone, onUndone, on
         <h3 className="section-title">{title}</h3>
         {extra}
       </div>
+      <div className="task-card">
       {tasks.length > 0 && (
         <ul className="task-list">
           {tasks.map(t => {
             const due = dueLabel(t.due_on);
             return (
               <li key={t.id} data-task={t.id}
-                  className={`task${onPress ? ' draggable' : ''}${draggingId === t.id ? ' dragging' : ''}`
+                  className={`task${onPress ? ' draggable' : ''}${draggingId === t.id ? ' dragging' : ''}${completing.has(t.id) ? ' completing' : ''}`
                     + `${lineBefore === t.id ? ' line-before' : ''}${lineAfter === t.id ? ' line-after' : ''}`}
                   onPointerDown={onPress && editing !== t.id ? e => onPress(t, e) : undefined}>
                 {onPress && <span className="task-grip" aria-hidden>⋮⋮</span>}
-                <input type="checkbox" aria-label={`Done: ${t.title}`} onChange={() => onDone(t)} />
+                <input type="checkbox" aria-label={`Done: ${t.title}`} checked={completing.has(t.id)} onChange={() => tick(t)} />
                 <button className="task-title" onClick={() => setEditing(e => (e === t.id ? null : t.id))}>{t.title}</button>
                 {due && <span className={due.late ? 'task-due late' : 'task-due'}>{due.text}</span>}
                 {t.thread_id && t.account_id && (
@@ -76,10 +87,12 @@ export default function TaskList({ tasks, done = [], onAdd, onDone, onUndone, on
         </ul>
       )}
       <form className="task-add" onSubmit={e => { e.preventDefault(); add(); }}>
+        <span className="task-plus" aria-hidden>+</span>
         <input value={text} onChange={e => setText(e.target.value)} placeholder="Add a to-do…" maxLength={300}
                aria-label="Add a to-do" />
         {text.trim() && <button className="primary" disabled={saving}>Add</button>}
       </form>
+      </div>
       {done.length > 0 && (
         <div className="done-pile">
           <div className="done-head">
