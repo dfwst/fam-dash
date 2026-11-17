@@ -50,7 +50,6 @@ export default function AboutYou({ me, first = false, onSaved }: {
         </>
       ) : (
         <>
-          <h2>About you</h2>
           <p className="muted small">Used only to sort <strong>your</strong> mail and write your reply drafts. Nobody else in your household sees your email.</p>
         </>
       )}

@@ -29,8 +29,21 @@ const POLICY: Record<Account['policy'], { label: string; help: string }> = {
   full: { label: 'Junk + Glance', help: 'Archives + marks read Junk and Glance. Real always stays in the inbox.' },
 };
 
+// Settings is split into sections with a sub-nav; ?s= keeps your place (and the back button works)
+const SECTIONS = [
+  { id: 'accounts', label: 'Accounts' },
+  { id: 'about', label: 'About you' },
+  { id: 'rules', label: 'Rules' },
+  { id: 'invites', label: 'Invites' },
+  { id: 'more', label: 'More' },
+] as const;
+type SectionId = typeof SECTIONS[number]['id'];
+
 export default function Settings() {
   const [params, setParams] = useSearchParams();
+  const section: SectionId = SECTIONS.some(x => x.id === params.get('s')) ? params.get('s') as SectionId : 'accounts';
+  const go = (id: SectionId) => setParams(id === 'accounts' ? {} : { s: id });
+  const [openAcct, setOpenAcct] = useState<string | null>(null);
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -130,13 +143,34 @@ export default function Settings() {
 
   return (
     <section className="stack">
+      <h2 className="page-title">Settings</h2>
+      <nav className="subnav" aria-label="Settings sections">
+        {SECTIONS.map(x => (
+          <button key={x.id} className={section === x.id ? 'subnav-item active' : 'subnav-item'}
+                  aria-current={section === x.id ? 'page' : undefined} onClick={() => go(x.id)}>{x.label}</button>
+        ))}
+      </nav>
+
+      {section === 'about' && (me ? <AboutYou me={me} onSaved={m => setMe(x => (x ? { ...x, ...m } : x))} /> : <p className="muted">Loading…</p>)}
+      {section === 'rules' && <Rules />}
+      {section === 'invites' && <Household />}
+      {section === 'more' && (
+        <div className="stack">
+          <p className="muted small">
+            rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
+            Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
+          </p>
+          <GmailOpenTest />
+        </div>
+      )}
+
+      {section === 'accounts' && <>
       {welcome && (
         <p className="notice" onClick={() => setParams({})}>
           Thanks! Now connect your email below — Gmail, Outlook, or Yahoo / iCloud / AOL. After each one, rlyfe asks
           what it’s for, then <strong>Review → Sync now</strong> brings the mail in.
         </p>
       )}
-      <h2>Accounts</h2>
 
       {connected && (
         <p className="notice" onClick={() => setParams({})}>Connected {connected}. Mail is read only until we turn on cleanup.</p>
@@ -154,11 +188,17 @@ export default function Settings() {
           {accounts.map(a => (
             <li key={a.id} className="row">
               <div className="row-main">
-                <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">{serviceName(a)}{a.shared ? ' · shared with household' : ''}</div>
+                <button className="acct-head" aria-expanded={openAcct === a.id} onClick={() => setOpenAcct(o => (o === a.id ? null : a.id))}>
+                  <span className="row-title ellipsis">{a.email}</span>
+                  <span className="muted small">
+                    {serviceName(a)} · {a.tabs?.name ?? 'no tab'}{a.nickname ? ` · “${a.nickname}”` : ''}{a.shared ? ' · shared' : ''}
+                  </span>
+                  <span className="acct-chevron" aria-hidden>{openAcct === a.id ? '▴' : '▾'}</span>
+                </button>
                 {!a.ai_context && a.owner_id === myId && (
                   <AccountPurpose account={a} onSaved={ai_context => setAccounts(l => l?.map(x => (x.id === a.id ? { ...x, ai_context } : x)) ?? null)} />
                 )}
+                {openAcct === a.id && <>
                 <NicknameField account={a} onSave={n => setNickname(a, n)} />
                 <label className="policy">
                   <span className="muted small">Shows on tab</span>
@@ -192,6 +232,7 @@ export default function Settings() {
                     <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
                   </>
                 )}
+                </>}
               </div>
               {a.status === 'needs_reconnect' ? (
                 <button className="pill warn" disabled={busy} onClick={() => (a.provider === 'imap' ? setImapFor(a.email) : connect(a.provider, a.email))}>Reconnect</button>
@@ -222,17 +263,8 @@ export default function Settings() {
                        loadAccounts().then(setAccounts).catch(e => setError(e.message));
                      }} />
       )}
-      <p className="muted small">
-        rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
-        Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
-      </p>
-
-      {me && <AboutYou me={me} onSaved={m => setMe(x => (x ? { ...x, ...m } : x))} />}
-
-      <Rules />
-      <Household />
-
-      <GmailOpenTest />
+      <p className="muted small">rlyfe never deletes mail and never sends without your tap. Tap an account to change its settings.</p>
+      </>}
     </section>
   );
 }

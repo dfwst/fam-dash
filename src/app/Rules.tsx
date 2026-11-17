@@ -103,7 +103,6 @@ export default function Rules() {
 
   return (
     <section className="stack">
-      <h2>Rules</h2>
       <p className="muted small">
         Send mail about one thing to one tab — from any account. Example: everything about Karen Williams → a Karen tab you both see.
       </p>

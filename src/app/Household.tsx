@@ -60,7 +60,6 @@ export default function Household() {
 
   return (
     <section className="stack">
-      <h2>Household</h2>
       <ul className="list">
         {members.map(m => (
           <li key={m.user_id} className="row"><span className="row-title">{m.display_name || 'Member'}</span>
