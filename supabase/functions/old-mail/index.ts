@@ -9,7 +9,7 @@
 //   - mail from people you've written to (anyone in your Sent folder's To/Cc)
 //   - senders / companies you've marked Real in rlyfe
 // Never deletes. Every archived Message-ID is recorded in cleanup_batches so Undo can find it.
-import { requireMember, type Ctx } from '../_shared/auth.ts';
+import { accountFor, requireMember, type Ctx } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { decrypt } from '../_shared/crypto.ts';
 import { findFolders, newImapClient, type ImapCreds } from '../_shared/imap.ts';
@@ -33,8 +33,8 @@ Deno.serve(async (req) => {
   const started = Date.now();
   let client: Client = null;
   try {
-    const { data: acct } = await ctx.admin.from('connected_accounts').select('id, email, provider')
-      .eq('id', String(body.accountId ?? '')).eq('household_id', ctx.householdId).maybeSingle();
+    // Only accounts this person may use (their own, or shared)
+    const acct = await accountFor<{ email: string; provider: string }>(ctx, body.accountId);
     if (!acct || acct.provider !== 'imap') throw new Refused('not-found');
     const { data: s } = await ctx.admin.from('account_secrets').select('refresh_token_enc').eq('account_id', acct.id).single();
     client = newImapClient(JSON.parse(await decrypt(s!.refresh_token_enc)) as ImapCreds);
@@ -107,8 +107,8 @@ async function peopleYouWrote(client: Client, sent: string): Promise<Set<string>
 async function keepRules(ctx: Ctx, client: Client, sent: string) {
   const [wrote, { data: sp }, { data: dp }] = await Promise.all([
     peopleYouWrote(client, sent),
-    ctx.admin.from('sender_prefs').select('sender_email').eq('household_id', ctx.householdId).eq('bucket', 3),
-    ctx.admin.from('domain_prefs').select('domain').eq('household_id', ctx.householdId).eq('bucket', 3),
+    ctx.admin.from('sender_prefs').select('sender_email').eq('household_id', ctx.householdId).eq('owner_id', ctx.userId).eq('bucket', 3),
+    ctx.admin.from('domain_prefs').select('domain').eq('household_id', ctx.householdId).eq('owner_id', ctx.userId).eq('bucket', 3),
   ]);
   const realSenders = new Set((sp ?? []).map(r => r.sender_email));
   const realDomains = new Set((dp ?? []).map(r => r.domain));

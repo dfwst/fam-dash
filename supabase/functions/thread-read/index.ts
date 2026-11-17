@@ -1,7 +1,7 @@
 // POST (signed in, 2FA) { accountId, threadId } → the whole conversation, for reading inside rlyfe.
 // Read-only: doesn't mark anything read and stores nothing — the body is fetched fresh each time
 // and only travels to your browser.
-import { requireMember } from '../_shared/auth.ts';
+import { accountFor, requireMember } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import { isValidThreadId, openMailbox } from '../_shared/mailbox.ts';
@@ -23,8 +23,8 @@ Deno.serve(async (req) => {
   if (ctx instanceof Response) return ctx;
 
   const { accountId, threadId } = await req.json().catch(() => ({}));
-  const { data: acct } = await ctx.admin.from('connected_accounts')
-    .select('id, email, provider').eq('id', accountId ?? '').eq('household_id', ctx.householdId).maybeSingle();
+  // Only accounts this person may see (their own, or shared)
+  const acct = await accountFor<{ email: string; provider: 'google' | 'microsoft' | 'imap' }>(ctx, accountId);
   if (!acct || !isValidThreadId(acct.provider, threadId)) return json({ error: 'not-found' }, 404);
 
   try {

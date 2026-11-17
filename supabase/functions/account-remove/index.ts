@@ -14,9 +14,11 @@ Deno.serve(async (req) => {
   if (ctx instanceof Response) return ctx;
 
   const { accountId } = await req.json().catch(() => ({}));
-  const { data: acct } = await ctx.admin.from('connected_accounts').select('id, email, provider')
+  const { data: acct } = await ctx.admin.from('connected_accounts').select('id, email, provider, owner_id, shared')
     .eq('id', String(accountId ?? '')).eq('household_id', ctx.householdId).maybeSingle();
-  if (!acct) return json({ error: 'not-found' }, 404);
+  if (!acct || (acct.owner_id !== ctx.userId && !acct.shared)) return json({ error: 'not-found' }, 404);
+  // Only the person who connected it can remove it (a shared account is still theirs)
+  if (acct.owner_id !== ctx.userId) return json({ error: 'not-yours' }, 403);
 
   // Revoke Google's grant (best effort — the account is removed either way)
   if (acct.provider === 'google') {
@@ -36,13 +38,13 @@ Deno.serve(async (req) => {
 
   // "Always ignore" bookkeeping: forget this account's filter/rule ids
   const { data: prefs } = await ctx.admin.from('sender_prefs').select('sender_email, gmail_filters')
-    .eq('household_id', ctx.householdId).not('gmail_filters', 'is', null);
+    .eq('household_id', ctx.householdId).eq('owner_id', ctx.userId).not('gmail_filters', 'is', null);
   for (const p of (prefs ?? []).filter(p => (p.gmail_filters as Record<string, string>)?.[acct.id])) {
     const filters = { ...(p.gmail_filters as Record<string, string>) };
     delete filters[acct.id];
     await ctx.admin.from('sender_prefs')
       .update({ gmail_filters: filters, always_ignore: Object.keys(filters).length > 0, updated_at: new Date().toISOString() })
-      .eq('household_id', ctx.householdId).eq('sender_email', p.sender_email);
+      .eq('household_id', ctx.householdId).eq('owner_id', ctx.userId).eq('sender_email', p.sender_email);
   }
 
   // Cascades: account_secrets, email_threads, sync_runs, action_log. tasks.account_id → null.

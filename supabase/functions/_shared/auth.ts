@@ -41,3 +41,17 @@ export async function requireMember(req: Request): Promise<Ctx | Response> {
 
   return { admin, userId: user.id, householdId: m.household_id };
 }
+
+// A mail account this person may use: in their household AND (theirs, or marked shared).
+// Every function that touches an account goes through this — the service-role client skips
+// row-level security, so the check has to happen here too.
+export async function accountFor<T extends Record<string, unknown> = Record<string, unknown>>(
+  ctx: Ctx, accountId: unknown, cols = 'id, email, provider, owner_id, shared',
+): Promise<(T & { id: string; owner_id: string; shared: boolean }) | null> {
+  if (typeof accountId !== 'string' || !accountId) return null;
+  const { data } = await ctx.admin.from('connected_accounts').select(cols.includes('owner_id') ? cols : `${cols}, owner_id, shared`)
+    .eq('id', accountId).eq('household_id', ctx.householdId).maybeSingle();
+  const row = data as (T & { id: string; owner_id: string; shared: boolean }) | null;
+  if (!row || (row.owner_id !== ctx.userId && !row.shared)) return null;
+  return row;
+}

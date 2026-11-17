@@ -6,6 +6,9 @@ import GmailOpenTest from './GmailOpenTest';
 import ConnectImap from './ConnectImap';
 import OldMailCleanup from './OldMailCleanup';
 import { loadAccounts, serviceName, type Account } from '../lib/accounts';
+import AccountPurpose from './AccountPurpose';
+import AboutYou from './AboutYou';
+import Household from './Household';
 
 const ERRORS: Record<string, string> = {
   access_denied: 'Google sign-in was cancelled.',
@@ -15,6 +18,7 @@ const ERRORS: Record<string, string> = {
   'connect-failed': "Couldn't save the account. Try again.",
   'ms-admin-approval': "Your organization's IT has to approve rlyfe before this work account can connect.",
   'ms-not-configured': "Microsoft sign-in isn't set up on the server yet.",
+  'connected-by-someone-else': 'Someone else in your household already connected that address — it stays in their rlyfe.',
 };
 
 // What the MORNING SYNC may do on its own. Your own taps (Done, Ignore…) work on every account.
@@ -34,11 +38,19 @@ export default function Settings() {
   const [tabs, setTabs] = useState<{ id: string; name: string }[]>([]);
   const [notice, setNotice] = useState('');
   const [cleanupFor, setCleanupFor] = useState<string | null>(null);
+  const [myId, setMyId] = useState('');
+  const [me, setMe] = useState<{ display_name: string | null; profile: Record<string, string>; onboarded_at: string | null } | null>(null);
 
   const connected = params.get('connected') || justConnected;
   const urlError = params.get('error');
+  const welcome = params.get('welcome');
 
   useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setMyId(user?.id ?? '');
+      supabase.from('household_members').select('display_name, profile, onboarded_at').eq('user_id', user?.id ?? '')
+        .maybeSingle().then(({ data }) => setMe(data as typeof me));
+    });
     loadAccounts().then(setAccounts).catch(e => setError(e.message));
     supabase.from('tabs').select('id, name').eq('is_active', true).order('sort_order')
       .then(({ data }) => setTabs(data ?? []));
@@ -107,8 +119,22 @@ export default function Settings() {
     }
   }
 
+  // Share an account with the household (its mail shows for everyone, on the tab you pick)
+  async function setShared(a: Account, shared: boolean) {
+    if (shared && !confirm(`Share ${a.email} with your household?\n\nEveryone in the household will see its mail, sorting and history.`)) return;
+    const { error } = await supabase.from('connected_accounts').update({ shared }).eq('id', a.id);
+    if (error) return setError(error.message);
+    setAccounts(list => list?.map(x => (x.id === a.id ? { ...x, shared } : x)) ?? null);
+  }
+
   return (
     <section className="stack">
+      {welcome && (
+        <p className="notice" onClick={() => setParams({})}>
+          Thanks! Now connect your email below — Gmail, Outlook, or Yahoo / iCloud / AOL. After each one, rlyfe asks
+          what it’s for, then <strong>Review → Sync now</strong> brings the mail in.
+        </p>
+      )}
       <h2>Accounts</h2>
 
       {connected && (
@@ -128,7 +154,10 @@ export default function Settings() {
             <li key={a.id} className="row">
               <div className="row-main">
                 <div className="row-title ellipsis">{a.email}</div>
-                <div className="muted small">{serviceName(a)}</div>
+                <div className="muted small">{serviceName(a)}{a.shared ? ' · shared with household' : ''}</div>
+                {!a.ai_context && a.owner_id === myId && (
+                  <AccountPurpose account={a} onSaved={ai_context => setAccounts(l => l?.map(x => (x.id === a.id ? { ...x, ai_context } : x)) ?? null)} />
+                )}
                 <NicknameField account={a} onSave={n => setNickname(a, n)} />
                 <label className="policy">
                   <span className="muted small">Shows on tab</span>
@@ -153,7 +182,15 @@ export default function Settings() {
                 )}
                 {cleanupFor === a.id && <OldMailCleanup accountId={a.id} email={a.email} />}
                 <Link className="link small remove-acct" to={`/retire/${a.id}`}>Retire this address…</Link>
-                <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
+                {a.owner_id === myId && (
+                  <>
+                    <label className="check-line small">
+                      <input type="checkbox" checked={a.shared} onChange={e => setShared(a, e.target.checked)} />
+                      Shared with household
+                    </label>
+                    <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
+                  </>
+                )}
               </div>
               {a.status === 'needs_reconnect' ? (
                 <button className="pill warn" disabled={busy} onClick={() => (a.provider === 'imap' ? setImapFor(a.email) : connect(a.provider, a.email))}>Reconnect</button>
@@ -188,6 +225,10 @@ export default function Settings() {
         rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
         Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
       </p>
+
+      {me && <AboutYou me={me} onSaved={m => setMe(x => (x ? { ...x, ...m } : x))} />}
+
+      <Household />
 
       <GmailOpenTest />
     </section>

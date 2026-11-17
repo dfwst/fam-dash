@@ -9,8 +9,12 @@ import ThreadView from './reader/ThreadView';
 import Retire from './Retire';
 import { usePullToRefresh } from '../lib/usePullToRefresh';
 import { REFRESH_EVENT, type RefreshDetail } from '../lib/refresh';
+import { callFn } from '../lib/functions';
+import { clearJoinToken, getJoinToken } from '../lib/join';
+import AboutYou from './AboutYou';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
+type Me = { display_name: string | null; profile: Record<string, string>; onboarded_at: string | null };
 
 export default function Shell() {
   const [tabs, setTabs] = useState<Tab[] | null>(null);
@@ -51,7 +55,33 @@ export default function Shell() {
     };
   }, []);
 
+  // Who am I in this household? Not a member yet + arrived from an invite → join now.
+  const [me, setMe] = useState<Me | null | 'none'>(null);
+  const [joinError, setJoinError] = useState('');
   useEffect(() => {
+    (async () => {
+      const { data: { user } } = await supabase.auth.getUser();
+      const load = () => supabase.from('household_members').select('display_name, profile, onboarded_at')
+        .eq('user_id', user?.id ?? '').limit(1).maybeSingle();
+      let { data } = await load();
+      const token = getJoinToken();
+      if (!data && token) {
+        try {
+          await callFn('invite-accept', { token });
+          clearJoinToken();
+          ({ data } = await load());
+        } catch (e) {
+          const m = e instanceof Error ? e.message : 'failed';
+          setJoinError(m === 'invite-expired' ? 'That invite link has expired or was already used. Ask for a new one.' : `Couldn’t join (${m}).`);
+          clearJoinToken();
+        }
+      }
+      setMe(data ? (data as Me) : 'none');
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!me || me === 'none') return;
     supabase
       .from('tabs')
       .select('id, slug, name, sort_order')
@@ -61,9 +91,23 @@ export default function Shell() {
         if (error) setError(error.message);
         setTabs(data ?? []);
       });
-  }, []);
+  }, [me]);
 
-  if (!tabs) return <div className="center muted">Loading…</div>;
+  if (me === 'none') {
+    return (
+      <main className="card-page">
+        <div className="card">
+          <h1 className="card-logo"><Logo height={44} /></h1>
+          <p>{joinError || 'You’re signed in, but not part of a household yet.'}</p>
+          <p className="muted small">Ask whoever set up rlyfe for an invite link, then open it on this device.</p>
+          <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
+        </div>
+      </main>
+    );
+  }
+  if (!me || !tabs) return <div className="center muted">Loading…</div>;
+  // First time in: a few quick questions so sorting knows what matters to you
+  if (!me.onboarded_at && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
 
   return (
     <div className="shell">
@@ -106,6 +150,7 @@ export default function Shell() {
             <Route path="/review" element={<Review />} />
             <Route path="/t/:accountId/:threadId" element={<ThreadView />} />
             <Route path="/retire/:accountId" element={<Retire />} />
+            <Route path="/welcome" element={<AboutYou me={me} first onSaved={m => setMe({ ...me, ...m })} />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         )}

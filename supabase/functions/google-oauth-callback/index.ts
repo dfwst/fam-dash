@@ -9,6 +9,7 @@
 import { adminClient } from '../_shared/auth.ts';
 import { encrypt } from '../_shared/crypto.ts';
 import { exchangeCode, gmail, SCOPES } from '../_shared/google.ts';
+import { defaultTabFor } from '../_shared/people.ts';
 
 const TAB_BY_DOMAIN: Record<string, string> = { 'dfwsmarttech.com': 'dfw' }; // everything else → life
 
@@ -43,9 +44,11 @@ Deno.serve(async (req) => {
 
     const { data: existing } = await admin
       .from('connected_accounts')
-      .select('id')
+      .select('id, owner_id')
       .eq('household_id', st.household_id).eq('provider', 'google').eq('email', email)
       .maybeSingle();
+    // Someone else in the household already connected this address — it stays theirs
+    if (existing && existing.owner_id !== st.user_id) return back(st.return_to, { error: 'connected-by-someone-else' });
 
     let accountId = existing?.id as string | undefined;
     if (accountId) {
@@ -55,11 +58,9 @@ Deno.serve(async (req) => {
         .eq('id', accountId);
     } else {
       const slug = TAB_BY_DOMAIN[email.split('@')[1]] ?? 'life';
-      const { data: tab } = await admin.from('tabs').select('id')
-        .eq('household_id', st.household_id).eq('slug', slug).maybeSingle();
       const { data: created, error } = await admin.from('connected_accounts').insert({
-        household_id: st.household_id, provider: 'google', email,
-        default_tab_id: tab?.id ?? null, connected_by: st.user_id,
+        household_id: st.household_id, provider: 'google', email, owner_id: st.user_id,
+        default_tab_id: await defaultTabFor(admin, st.household_id, st.user_id, slug), connected_by: st.user_id,
       }).select('id').single();
       if (error) throw error;
       accountId = created.id;

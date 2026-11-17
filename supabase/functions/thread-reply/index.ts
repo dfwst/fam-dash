@@ -8,7 +8,8 @@
 //        done=true also archives it (with an Undo, like the Done button)
 //
 // Nothing here runs on a schedule: 'send' only happens when you tap Send.
-import { requireMember, type Ctx } from '../_shared/auth.ts';
+import { accountFor, requireMember, type Ctx } from '../_shared/auth.ts';
+import { loadPerson } from '../_shared/people.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect, type Provider } from '../_shared/accounts.ts';
 import { isValidThreadId, openMailbox, type Mailbox, type MailThread } from '../_shared/mailbox.ts';
@@ -50,17 +51,18 @@ Deno.serve(async (req) => {
   }
 });
 
-type Acct = { id: string; email: string; provider: Provider; ai_context: string | null };
+type Acct = { id: string; email: string; provider: Provider; ai_context: string | null; owner_id: string };
 
+// Only accounts this person may use (their own, or shared)
 async function loadAccount(ctx: Ctx, accountId: unknown, threadId: unknown): Promise<Acct> {
-  const { data } = await ctx.admin.from('connected_accounts')
-    .select('id, email, provider, ai_context').eq('id', String(accountId ?? '')).eq('household_id', ctx.householdId).maybeSingle();
+  const data = await accountFor<Acct>(ctx, accountId, 'id, email, provider, ai_context, owner_id, shared');
   if (!data || !isValidThreadId(data.provider, threadId)) throw new Refused('not-found');
   return data;
 }
 
 async function draft(ctx: Ctx, acct: Acct, thread: MailThread, rough: string) {
-  const r = await draftReply(thread, acct.email, acct.ai_context, rough);
+  // Drafts are written in the voice of the person replying
+  const r = await draftReply(thread, acct.email, acct.ai_context, rough, await loadPerson(ctx.admin, ctx.userId));
   await ctx.admin.from('ai_usage').insert({
     household_id: ctx.householdId, account_id: acct.id, thread_id: thread.id, purpose: rough.trim() ? 'polish_reply' : 'draft_reply',
     model: DRAFT_MODEL, input_tokens: r.usage.input, output_tokens: r.usage.output, cost_usd: r.cost,

@@ -351,3 +351,13 @@ body { overflow-wrap: anywhere; }
 .retire-item .actions { padding-left: 0; flex-wrap: wrap; }
 .retire-kind { font: inherit; font-size: .85rem; margin-left: auto; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .reader-head-right { display: flex; gap: 14px; align-items: center; }
+
+/* People: about you, account purpose, household */
+.about-you textarea { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); resize: vertical; }
+.purpose { display: grid; gap: 8px; padding: 10px; margin: 6px 0; border-radius: 12px; background: var(--accent-soft); min-width: 0; }
+.purpose p { margin: 0; }
+.purpose input { width: 100%; box-sizing: border-box; font: inherit; font-size: 16px; padding: 8px 10px; border-radius: 10px;
+  border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.purpose .primary { justify-self: start; }
+.invite input { width: 100%; box-sizing: border-box; }

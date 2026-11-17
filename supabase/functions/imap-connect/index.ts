@@ -5,6 +5,7 @@
 import { requireMember } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { encrypt } from '../_shared/crypto.ts';
+import { defaultTabFor } from '../_shared/people.ts';
 import { PRESETS, testCreds, type ImapCreds, type ImapService } from '../_shared/imap.ts';
 
 const SERVICES: ImapService[] = ['yahoo', 'aol', 'icloud', 'other'];
@@ -48,19 +49,19 @@ Deno.serve(async (req) => {
     return json({ error: 'imap-unreachable' }, 502);
   }
 
-  const { data: existing } = await ctx.admin.from('connected_accounts').select('id')
+  const { data: existing } = await ctx.admin.from('connected_accounts').select('id, owner_id')
     .eq('household_id', ctx.householdId).eq('provider', 'imap').eq('email', email).maybeSingle();
+  // Someone else in the household already connected this address — it's theirs, not yours
+  if (existing && existing.owner_id !== ctx.userId) return json({ error: 'connected-by-someone-else' }, 409);
   let accountId = existing?.id as string | undefined;
   if (accountId) {
     await ctx.admin.from('connected_accounts')
       .update({ status: 'active', mail_service: service, connected_by: ctx.userId, updated_at: new Date().toISOString() })
       .eq('id', accountId);
   } else {
-    const { data: tab } = await ctx.admin.from('tabs').select('id')
-      .eq('household_id', ctx.householdId).eq('slug', 'life').maybeSingle();
     const { data: created, error } = await ctx.admin.from('connected_accounts').insert({
-      household_id: ctx.householdId, provider: 'imap', mail_service: service, email,
-      default_tab_id: tab?.id ?? null, connected_by: ctx.userId,
+      household_id: ctx.householdId, provider: 'imap', mail_service: service, email, owner_id: ctx.userId,
+      default_tab_id: await defaultTabFor(ctx.admin, ctx.householdId, ctx.userId, 'life'), connected_by: ctx.userId,
       nickname: NICK[service] || email.split('@')[1].split('.')[0].slice(0, 24),
     }).select('id').single();
     if (error) return json({ error: 'connect-failed' }, 500);

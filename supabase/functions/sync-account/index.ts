@@ -23,6 +23,7 @@ import { threadFacts } from '../_shared/gmail-parse.ts';
 import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
 import { classifyWithClaude, type Correction } from '../_shared/classify.ts';
 import { flagArrival } from '../_shared/retire.ts';
+import { loadPerson } from '../_shared/people.ts';
 
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SELF = `${SB_URL}/functions/v1/sync-account`;
@@ -34,7 +35,7 @@ const MAX_ATTEMPTS = 3;
 
 type Acct = {
   id: string; email: string; provider: Provider; policy: string; ai_context: string | null; household_id: string;
-  retiring: boolean; retire_scanned_at: string | null;
+  retiring: boolean; retire_scanned_at: string | null; owner_id: string;
 };
 type Stats = Record<string, number>;
 
@@ -57,7 +58,7 @@ async function work(runId: string, chain: number) {
   if (!run || run.status !== 'running') return;
 
   const { data: acct } = await admin.from('connected_accounts')
-    .select('id, email, provider, policy, ai_context, household_id, retiring, retire_scanned_at').eq('id', run.account_id).single<Acct>();
+    .select('id, email, provider, policy, ai_context, household_id, retiring, retire_scanned_at, owner_id').eq('id', run.account_id).single<Acct>();
   if (!acct) return;
 
   const stats: Stats = { ...(run.stats ?? {}) };
@@ -135,18 +136,20 @@ async function sortPending(
   const bump = (k: string, n = 1) => { stats[k] = (stats[k] ?? 0) + n; };
   const failed = new Set<string>(); // failed this invocation → retried by the next one, not now
 
-  // What you've taught it: sender → bucket, plus recent corrections to show Claude
+  // What the mailbox's OWNER has taught it (each person's learning is their own):
+  // sender → bucket, plus their recent corrections to show Claude
   const { data: prefRows } = await admin.from('sender_prefs')
-    .select('sender_email, bucket').eq('household_id', acct.household_id).not('bucket', 'is', null);
+    .select('sender_email, bucket').eq('household_id', acct.household_id).eq('owner_id', acct.owner_id).not('bucket', 'is', null);
   const learned = new Map<string, 1 | 2 | 3>((prefRows ?? []).map(p => [p.sender_email, p.bucket]));
   // Company-wide choices from the Review queue ("everything from linkedin.com is Junk")
   const { data: domainRows } = await admin.from('domain_prefs')
-    .select('domain, bucket').eq('household_id', acct.household_id);
+    .select('domain, bucket').eq('household_id', acct.household_id).eq('owner_id', acct.owner_id);
   const domainPref = new Map<string, 1 | 2 | 3>((domainRows ?? []).map(d => [d.domain, d.bucket]));
   const { data: corrRows } = await admin.from('email_threads')
     .select('subject, from_name, from_email, bucket, user_bucket')
-    .eq('household_id', acct.household_id).not('user_bucket', 'is', null)
+    .eq('owner_id', acct.owner_id).not('user_bucket', 'is', null)
     .order('updated_at', { ascending: false }).limit(200);
+  const person = await loadPerson(admin, acct.owner_id);
   const corrections = (corrRows ?? []) as Correction[];
   const examplesFor = (fromEmail: string) => {
     const domain = '@' + (fromEmail.split('@')[1] ?? '');
@@ -213,7 +216,7 @@ async function sortPending(
           bump(sort.by === 'learned' ? 'by_learned' : 'by_rule');
         } else {
           // Learned "Real" still goes to Claude — for the 2–3 line summary
-          const ai = await classifyWithClaude(f, acct, examplesFor(f.fromEmail));
+          const ai = await classifyWithClaude(f, acct, examplesFor(f.fromEmail), person);
           sort = pref === 3 ? { ...ai.sort, bucket: 3, by: 'learned', reason: prefReason } : ai.sort;
           bump(sort.by === 'ai' ? 'by_ai' : sort.by === 'learned' ? 'by_learned' : 'fallback');
           await admin.from('ai_usage').insert({
@@ -310,7 +313,7 @@ async function autoArchive(admin: SupabaseClient, acct: Acct, mb: Mailbox, runId
 // filter's job here: anything from an always-ignored sender leaves the inbox at each sync.
 async function applyIgnoreRules(admin: SupabaseClient, acct: Acct, mb: Mailbox, runId: string, stats: Stats) {
   const { data: prefs } = await admin.from('sender_prefs')
-    .select('sender_email, gmail_filters').eq('household_id', acct.household_id).eq('always_ignore', true);
+    .select('sender_email, gmail_filters').eq('household_id', acct.household_id).eq('owner_id', acct.owner_id).eq('always_ignore', true);
   const senders = (prefs ?? [])
     .filter(p => (p.gmail_filters as Record<string, string> | null)?.[acct.id])
     .map(p => p.sender_email);

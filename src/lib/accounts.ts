@@ -9,6 +9,9 @@ export type Account = {
   status: 'active' | 'needs_reconnect' | 'disabled';
   default_tab_id: string | null;
   nickname: string | null;
+  ai_context: string | null;   // "what's this account for?" — guides sorting
+  owner_id: string;
+  shared: boolean;
   tabs: { name: string } | null;
 };
 
@@ -22,7 +25,7 @@ export const accountLabel = (a: Account) => a.nickname || a.email.split('@')[0];
 export async function loadAccounts(tabId?: string): Promise<Account[]> {
   let q = supabase
     .from('connected_accounts')
-    .select('id, email, provider, mail_service, policy, status, default_tab_id, nickname, tabs(name)')
+    .select('id, email, provider, mail_service, policy, status, default_tab_id, nickname, ai_context, owner_id, shared, tabs(name)')
     .order('email');
   if (tabId) q = q.eq('default_tab_id', tabId);
   const { data, error } = await q;

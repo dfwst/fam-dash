@@ -6,7 +6,7 @@
 // one-click / email happen here; 'link' (only a web page) comes back for the app to open.
 // Refuses: priority mail, personal addresses (a person isn't a mailing list), and anything the
 // retire scan marked as likely phishing or spam — unsubscribing there only confirms your address.
-import { requireMember, type Ctx } from '../_shared/auth.ts';
+import { accountFor, requireMember, type Ctx } from '../_shared/auth.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import { isValidThreadId, openMailbox, type Mailbox } from '../_shared/mailbox.ts';
@@ -34,11 +34,11 @@ Deno.serve(async (req) => {
         .select('id, account_id, sender, personal, kind, reason, sample_ref')
         .eq('id', String(body.retireItemId)).eq('household_id', ctx.householdId).maybeSingle();
       if (!it) throw new Refused('not-found');
+      mb = await mailboxFor(ctx, it.account_id); // someone else's private account → not-found, before anything else
       if (it.personal || it.kind === 'person') throw new Refused('is-a-person');
       if (SCAMMY.test(it.reason ?? '')) throw new Refused('looks-like-spam');
       if (!it.sample_ref) throw new Refused('rescan-needed');
       accountId = it.account_id; sender = it.sender ?? ''; itemId = it.id;
-      mb = await mailboxFor(ctx, accountId);
       headers = await mb.messageUnsubHeaders(it.sample_ref);
       const m = mb, ref = it.sample_ref;
       bodyOf = () => m.messageBody(ref);
@@ -48,11 +48,11 @@ Deno.serve(async (req) => {
         .eq('account_id', String(body.accountId ?? '')).eq('thread_id', String(body.threadId ?? ''))
         .eq('household_id', ctx.householdId).maybeSingle();
       if (!t) throw new Refused('not-found');
+      mb = await mailboxFor(ctx, t.account_id); // someone else's private account → not-found, before anything else
       if (t.priority) throw new Refused('priority-mail');
       if (groupKey(t.from_email ?? '').personal) throw new Refused('is-a-person');
       await refuseIfScammy(ctx, t.from_email ?? '');
       accountId = t.account_id; sender = t.from_email ?? '';
-      mb = await mailboxFor(ctx, accountId);
       if (!isValidThreadId(mb.provider, t.thread_id)) throw new Refused('not-found');
       const thread = await mb.getThread(t.thread_id);
       headers = unsubHeadersOf(thread);
@@ -108,11 +108,11 @@ Deno.serve(async (req) => {
   }
 });
 
+// Only accounts this person may use (their own, or shared)
 async function mailboxFor(ctx: Ctx, accountId: string): Promise<Mailbox> {
-  const { data } = await ctx.admin.from('connected_accounts').select('id, email, provider')
-    .eq('id', accountId).eq('household_id', ctx.householdId).maybeSingle();
-  if (!data) throw new Refused('not-found');
-  return openMailbox(ctx.admin, data);
+  const acct = await accountFor<{ email: string; provider: 'google' | 'microsoft' | 'imap' }>(ctx, accountId);
+  if (!acct) throw new Refused('not-found');
+  return openMailbox(ctx.admin, acct);
 }
 
 // If any retire scan in this household judged the sender's domain to be phishing / spam, refuse

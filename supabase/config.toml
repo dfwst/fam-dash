@@ -16,3 +16,7 @@ verify_jwt = false
 
 [functions.sync-account]
 verify_jwt = false
+
+# Joining a household: the caller is signed in (aal2) but not a member yet — it checks that itself.
+[functions.invite-accept]
+verify_jwt = true

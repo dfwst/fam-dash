@@ -5,7 +5,8 @@
 // Headers only (sender, subject, date) — no message bodies, nothing in the mailbox changes.
 // Items you've already ticked off, skipped or moved keep your decision on a rescan.
 import type { SupabaseClient } from 'npm:@supabase/supabase-js@2.49.4';
-import { requireMember, type Ctx } from '../_shared/auth.ts';
+import { accountFor, requireMember, type Ctx } from '../_shared/auth.ts';
+import { loadPerson } from '../_shared/people.ts';
 import { json, preflight } from '../_shared/http.ts';
 import { NeedsReconnect } from '../_shared/accounts.ts';
 import {
@@ -25,8 +26,8 @@ Deno.serve(async (req) => {
   const started = Date.now();
 
   const { accountId, action } = await req.json().catch(() => ({}));
-  const { data: acct } = await ctx.admin.from('connected_accounts').select('id, email, provider, retire_scan_state')
-    .eq('id', String(accountId ?? '')).eq('household_id', ctx.householdId).maybeSingle<Acct>();
+  // Only accounts this person may use (their own, or shared)
+  const acct = await accountFor<Acct>(ctx, accountId, 'id, email, provider, retire_scan_state, owner_id, shared');
   if (!acct) return json({ error: 'not-found' }, 404);
 
   try {
@@ -138,7 +139,8 @@ async function finish(ctx: Ctx, acct: Acct) {
 
   // Claude sorts the senders you haven't decided on yourself (biggest first); the tail uses rules
   const open = all.filter(it => it.status === 'todo' && !it.kind_by_you);
-  const ai = await classifyGroups(open.slice(0, AI_GROUPS).map(asGroup), acct.email).catch(e => {
+  const owner = await loadPerson(ctx.admin, (acct as { owner_id?: string }).owner_id ?? ctx.userId);
+  const ai = await classifyGroups(open.slice(0, AI_GROUPS).map(asGroup), acct.email, owner.name).catch(e => {
     console.error('retire classify failed', e instanceof Error ? e.message : e);
     return { map: new Map<string, { name: string; kind: string; reason: string }>(), cost: 0, input: 0, output: 0 };
   });
