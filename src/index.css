@@ -391,3 +391,25 @@ ul.plain { list-style: none; margin: 0; padding: 0; }
 .acct-head .muted { grid-column: 1; }
 .acct-chevron { grid-column: 2; grid-row: 1 / span 2; align-self: center; color: var(--muted); }
 .tabs::-webkit-scrollbar { display: none; }
+
+/* Worth a glance: clear without opening (swipe or ✕) */
+.glance-row { position: relative; overflow: hidden; transition: opacity .16s; }
+.glance-row.leaving { opacity: 0; }
+.glance-hint { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--accent-soft); color: var(--text); font-weight: 600; font-size: .9rem; }
+.glance-slide { position: relative; display: flex; align-items: center; background: var(--surface);
+  transition: transform .16s; touch-action: pan-y; }
+.glance-slide > a { flex: 1; min-width: 0; }
+.glance-x { flex: none; background: none; border: 0; color: var(--muted); font-size: .95rem;
+  width: 40px; min-height: 40px; cursor: pointer; border-radius: 8px; margin-right: 4px; }
+.glance-x:hover { color: var(--text); background: var(--accent-soft); }
+
+/* To-Do page: drag a to-do onto another list */
+.task-grip { cursor: grab; color: var(--muted); padding: 6px 2px; margin-left: -4px; letter-spacing: -3px;
+  touch-action: none; user-select: none; -webkit-user-select: none; flex: none; }
+.task.dragging { opacity: .35; }
+.tasks.drop-over { outline: 2px dashed var(--accent); outline-offset: 6px; border-radius: 10px; }
+.link.inline.drop-over { outline: 2px dashed var(--accent); outline-offset: 3px; border-radius: 6px; }
+.drag-ghost { position: fixed; z-index: 50; pointer-events: none; transform: translate(12px, -50%);
+  background: var(--surface); border: 1px solid var(--accent); border-radius: 10px; padding: 8px 12px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.35); max-width: 70vw; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

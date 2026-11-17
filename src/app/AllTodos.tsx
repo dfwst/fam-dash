@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { Link } from 'react-router-dom';
 import * as tasksApi from '../lib/tasks';
 import { waitingByTab } from '../lib/todos';
@@ -16,6 +16,34 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
   const [error, setError] = useState('');
   const [toast, setToast] = useState<{ text: string; undo?: () => Promise<unknown> } | null>(null);
   const timer = useRef<number | undefined>(undefined);
+  // Drag a to-do by its ⋮⋮ handle onto another list (mouse or finger)
+  const [drag, setDrag] = useState<{ task: tasksApi.Task; x: number; y: number; over: string | null } | null>(null);
+  const editRef = useRef<(t: tasksApi.Task, c: tasksApi.TaskChange) => void>(() => {});
+
+  const grab = (task: tasksApi.Task, e: ReactPointerEvent) => {
+    e.preventDefault();
+    const listAt = (x: number, y: number) =>
+      (document.elementFromPoint(x, y)?.closest('[data-list]') as HTMLElement | null)?.dataset.list ?? null;
+    setDrag({ task, x: e.clientX, y: e.clientY, over: task.tab_id });
+    const move = (ev: PointerEvent) => {
+      ev.preventDefault();
+      // near the top/bottom edge → scroll so far-away lists are reachable
+      const edge = Math.min(48, window.innerHeight * 0.08); // thin, so targets near the edge stay droppable
+      if (ev.clientY < edge) window.scrollBy(0, -10); else if (ev.clientY > window.innerHeight - edge) window.scrollBy(0, 10);
+      setDrag(d => (d ? { ...d, x: ev.clientX, y: ev.clientY, over: listAt(ev.clientX, ev.clientY) } : d));
+    };
+    const end = (ev: PointerEvent) => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end);
+      window.removeEventListener('pointercancel', end);
+      const to = ev.type === 'pointerup' ? listAt(ev.clientX, ev.clientY) : null;
+      setDrag(null);
+      if (to && to !== task.tab_id) editRef.current(task, { tab_id: to });
+    };
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', end);
+    window.addEventListener('pointercancel', end);
+  };
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +102,7 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
       })
       .catch(() => { show('Couldn’t save — try again'); load(); });
   };
+  editRef.current = edit;
   const remove = (t: tasksApi.Task) => {
     setTasks(list => list?.filter(x => x.id !== t.id) ?? null);
     tasksApi.deleteTask(t.id).catch(() => { show('Couldn’t delete — try again'); load(); });
@@ -96,6 +125,8 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
         return (
           <TaskList key={tab.id} title={tab.name} tasks={byTab.get(tab.id) ?? []}
                     onAdd={add(tab)} onDone={done} onEdit={edit} onDelete={remove} lists={tabs}
+                    listId={tab.id} onGrab={grab} dropping={!!drag && drag.over === tab.id && drag.task.tab_id !== tab.id}
+                    draggingId={drag?.task.id}
                     extra={n > 0 && <Link className="waiting-link small" to={`/${tab.slug}`}>✉ {n} {n === 1 ? 'email' : 'emails'} waiting →</Link>} />
         );
       })}
@@ -106,11 +137,19 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
           {quiet.map((t, i) => (
             <span key={t.id}>
               {i > 0 && ', '}
-              <button className="link inline" onClick={() => setOpened(s => new Set(s).add(t.id))}>{t.name}</button>
+              <button className={`link inline${drag?.over === t.id ? ' drop-over' : ''}`} data-list={t.id}
+                      onClick={() => setOpened(s => new Set(s).add(t.id))}>{t.name}</button>
             </span>
           ))}
           {' '}— tap one to add a to-do there.
         </p>
+      )}
+
+      {drag && (
+        <div className="drag-ghost" style={{ left: drag.x, top: drag.y }} aria-hidden>
+          {drag.task.title}
+          <span className="muted small">{drag.over && drag.over !== drag.task.tab_id ? ` → ${tabs.find(t => t.id === drag.over)?.name}` : ''}</span>
+        </div>
       )}
 
       {toast && (

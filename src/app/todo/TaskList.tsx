@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type ReactNode, type PointerEvent } from 'react';
 import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
 import { dueLabel, duePresets, type Task, type TaskChange } from '../../lib/tasks';
@@ -7,7 +7,7 @@ export type ListOption = { id: string; name: string };
 
 // The tab's To-Do list: your own action items. Tick one off and it's gone (with an Undo).
 // Items made from an email keep a ✉ link back to it.
-export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [] }: {
+export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [], listId, onGrab, dropping, draggingId }: {
   tasks: Task[];
   title?: string;
   extra?: ReactNode; // shown beside the heading (the To-Do page's "N emails" link)
@@ -15,6 +15,11 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
   onDone: (t: Task) => void;
   onEdit: (t: Task, change: TaskChange) => void;
   lists?: ListOption[]; // where an item can be moved (your tabs + shared ones)
+  // Drag between lists (To-Do page): this section is a drop target; the ⋮⋮ handle starts a drag
+  listId?: string;
+  onGrab?: (t: Task, e: PointerEvent) => void;
+  dropping?: boolean;      // a dragged item is over this list
+  draggingId?: string;     // the item being dragged (dimmed in place)
   onDelete: (t: Task) => void;
 }) {
   const [text, setText] = useState('');
@@ -28,7 +33,7 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
   }
 
   return (
-    <section className="stack tasks">
+    <section className={`stack tasks${dropping ? ' drop-over' : ''}`} data-list={listId}>
       <div className="tasks-head">
         <h3 className="section-title">{title}</h3>
         {extra}
@@ -38,7 +43,8 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
           {tasks.map(t => {
             const due = dueLabel(t.due_on);
             return (
-              <li key={t.id} className="task">
+              <li key={t.id} className={`task${draggingId === t.id ? ' dragging' : ''}`}>
+                {onGrab && <span className="task-grip" aria-hidden title="Drag to another list" onPointerDown={e => onGrab(t, e)}>⋮⋮</span>}
                 <input type="checkbox" aria-label={`Done: ${t.title}`} onChange={() => onDone(t)} />
                 <button className="task-title" onClick={() => setEditing(e => (e === t.id ? null : t.id))}>{t.title}</button>
                 {due && <span className={due.late ? 'task-due late' : 'task-due'}>{due.text}</span>}

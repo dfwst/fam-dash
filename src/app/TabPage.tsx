@@ -5,6 +5,7 @@ import { accountLabel, loadAccounts, type Account } from '../lib/accounts';
 import { ago, loadTabThreads, splitTodos, toLines, type TodoThread, threadPath } from '../lib/todos';
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
+import GlanceRow from './todo/GlanceRow';
 import TaskList from './todo/TaskList';
 import * as tasksApi from '../lib/tasks';
 import { useOnRefresh } from '../lib/refresh';
@@ -74,9 +75,11 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   };
 
   // Remove from the list right away; put it back if Gmail says no
-  const optimistic = (t: TodoThread, change: Partial<TodoThread> | 'remove') =>
+  const optimistic = (t: TodoThread, change: Partial<TodoThread> | 'remove') => {
     setInbox(list => (list ?? []).flatMap(x =>
       key(x) !== key(t) ? [x] : change === 'remove' ? [] : [{ ...x, ...change }]));
+    if (change === 'remove') setGlance(list => list.filter(x => key(x) !== key(t)));
+  };
 
   async function onAction(a: RowAction) {
     const t = a.thread;
@@ -258,17 +261,10 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
         <section className="stack">
           <h3 className="section-title">Worth a glance</h3>
           <ul className="glance">
-            {glanceShown.map(t => {
-              return (
-                <li key={key(t)}>
-                  <Link to={threadPath(t.account_id, t.thread_id)}>
-                    <span className="glance-from">{t.from_name || t.from_email}</span>
-                    <span className="glance-text">{t.summary || t.subject}</span>
-                    <span className="todo-meta">{ago(t.last_message_at)}</span>
-                  </Link>
-                </li>
-              );
-            })}
+            {glanceShown.map(t => (
+              <GlanceRow key={key(t)} t={t} canAct={byId.has(t.account_id)}
+                         onDismiss={x => onAction({ kind: 'done', thread: x })} />
+            ))}
           </ul>
           {glance.length > 3 && (
             <button className="more" onClick={() => setShowGlance(s => !s)}>
