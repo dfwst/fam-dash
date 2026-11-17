@@ -12,6 +12,7 @@ import { REFRESH_EVENT, type RefreshDetail } from '../lib/refresh';
 import { callFn } from '../lib/functions';
 import { clearJoinToken, getJoinToken } from '../lib/join';
 import AboutYou from './AboutYou';
+import AllTodos from './AllTodos';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 type Me = { display_name: string | null; profile: Record<string, string>; onboarded_at: string | null };
@@ -129,6 +130,7 @@ export default function Shell() {
 
       {tabs.length > 0 && (
         <nav className="tabs">
+          <NavLink to="/todos" className={({ isActive }) => (isActive ? 'tab todos active' : 'tab todos')}>✓ To-Do</NavLink>
           {tabs.map(t => (
             <NavLink key={t.id} to={`/${t.slug}`} className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
               {t.name}
@@ -146,6 +148,7 @@ export default function Shell() {
           <Routes key={remount}>
             <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
+            <Route path="/todos" element={<AllTodos tabs={tabs} />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/review" element={<Review />} />
             <Route path="/t/:accountId/:threadId" element={<ThreadView />} />

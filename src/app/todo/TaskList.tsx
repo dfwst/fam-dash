@@ -1,12 +1,14 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
 import { dueLabel, duePresets, type Task } from '../../lib/tasks';
 
 // The tab's To-Do list: your own action items. Tick one off and it's gone (with an Undo).
 // Items made from an email keep a ✉ link back to it.
-export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete }: {
+export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra }: {
   tasks: Task[];
+  title?: string;
+  extra?: ReactNode; // shown beside the heading (the To-Do page's "N emails" link)
   onAdd: (title: string) => Promise<void>;
   onDone: (t: Task) => void;
   onEdit: (t: Task, change: Partial<Pick<Task, 'title' | 'due_on'>>) => void;
@@ -24,7 +26,10 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete }: {
 
   return (
     <section className="stack tasks">
-      <h3 className="section-title">To-Do</h3>
+      <div className="tasks-head">
+        <h3 className="section-title">{title}</h3>
+        {extra}
+      </div>
       {tasks.length > 0 && (
         <ul className="task-list">
           {tasks.map(t => {

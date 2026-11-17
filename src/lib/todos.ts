@@ -137,3 +137,23 @@ export const ago = (iso: string | null) => {
   const d = Math.round(m / 1440);
   return d < 7 ? `${d}d` : new Date(iso).toLocaleDateString([], { month: 'short', day: 'numeric' });
 };
+
+// Emails waiting on you, counted per tab (a rule's tab wins over the account's tab).
+// Same rule as each tab's list: Real, not snoozed, and someone else wrote last.
+export async function waitingByTab(): Promise<Map<string, number>> {
+  const [threads, accts] = await Promise.all([
+    supabase.from('email_threads').select('account_id, bucket, user_bucket, last_from_me, snoozed_until, tab_id')
+      .eq('in_inbox', true).eq('status', 'classified').limit(3000),
+    supabase.from('connected_accounts').select('id, default_tab_id'),
+  ]);
+  if (threads.error) throw threads.error;
+  if (accts.error) throw accts.error;
+  const home = new Map((accts.data ?? []).map(a => [a.id, a.default_tab_id as string | null]));
+  const out = new Map<string, number>();
+  for (const t of (threads.data ?? []) as Pick<TodoThread, 'account_id' | 'bucket' | 'user_bucket' | 'last_from_me' | 'snoozed_until' | 'tab_id'>[]) {
+    if ((t.user_bucket ?? t.bucket) !== 3 || t.last_from_me || isSnoozed(t as TodoThread)) continue;
+    const tab = t.tab_id ?? home.get(t.account_id);
+    if (tab) out.set(tab, (out.get(tab) ?? 0) + 1);
+  }
+  return out;
+}

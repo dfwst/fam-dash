@@ -88,3 +88,12 @@ export function dueLabel(due: string | null): { text: string; late: boolean } | 
   const days = (d.getTime() - Date.now()) / 86_400_000;
   return { text: d.toLocaleDateString([], days < 6 ? { weekday: 'short' } : { month: 'short', day: 'numeric' }), late: false };
 }
+
+// Every open item you can see, across all tabs (yours + Shared) — for the To-Do page
+export async function loadAllTasks(): Promise<Task[]> {
+  const { data, error } = await supabase.from('tasks').select(COLS).is('done_at', null)
+    .order('due_on', { ascending: true, nullsFirst: false })
+    .order('created_at', { ascending: false });
+  if (error) throw error;
+  return data as Task[];
+}
