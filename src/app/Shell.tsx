@@ -147,7 +147,7 @@ export default function Shell() {
         ) : (
           <Routes key={remount}>
             <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
-            {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} />} />)}
+            {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} tabs={tabs} />} />)}
             <Route path="/todos" element={<AllTodos tabs={tabs} />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/review" element={<Review />} />

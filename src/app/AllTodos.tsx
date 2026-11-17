@@ -61,9 +61,18 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
     tasksApi.setDone(t.id, true).catch(() => { show('Couldn’t save — try again'); load(); });
     show(`Done: ${t.title}`, async () => { await tasksApi.setDone(t.id, false); await load(); });
   };
-  const edit = (t: tasksApi.Task, change: Partial<Pick<tasksApi.Task, 'title' | 'due_on'>>) => {
+  const edit = (t: tasksApi.Task, change: tasksApi.TaskChange) => {
     setTasks(list => list?.map(x => (x.id === t.id ? { ...x, ...change } : x)) ?? null);
-    tasksApi.updateTask(t.id, change).catch(() => { show('Couldn’t save — try again'); load(); });
+    tasksApi.updateTask(t.id, change)
+      .then(() => {
+        if (change.tab_id && change.tab_id !== t.tab_id) {
+          // opened: keep the destination visible even if it was empty
+          setOpened(s => new Set(s).add(change.tab_id!));
+          show(`Moved to ${tabs.find(x => x.id === change.tab_id)?.name ?? 'the other list'}`,
+            async () => { await tasksApi.updateTask(t.id, { tab_id: t.tab_id }); await load(); });
+        }
+      })
+      .catch(() => { show('Couldn’t save — try again'); load(); });
   };
   const remove = (t: tasksApi.Task) => {
     setTasks(list => list?.filter(x => x.id !== t.id) ?? null);
@@ -86,7 +95,7 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
         const n = waiting.get(tab.id) ?? 0;
         return (
           <TaskList key={tab.id} title={tab.name} tasks={byTab.get(tab.id) ?? []}
-                    onAdd={add(tab)} onDone={done} onEdit={edit} onDelete={remove}
+                    onAdd={add(tab)} onDone={done} onEdit={edit} onDelete={remove} lists={tabs}
                     extra={n > 0 && <Link className="waiting-link small" to={`/${tab.slug}`}>✉ {n} {n === 1 ? 'email' : 'emails'} waiting →</Link>} />
         );
       })}

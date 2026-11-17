@@ -29,7 +29,7 @@ type Toast = {
 
 const key = (t: Pick<TodoThread, 'account_id' | 'thread_id'>) => t.account_id + t.thread_id;
 
-export default function TabPage({ tab }: { tab: Tab }) {
+export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) {
   const [accounts, setAccounts] = useState<Account[] | null>(null);
   const [inbox, setInbox] = useState<TodoThread[] | null>(null);
   const [glance, setGlance] = useState<TodoThread[]>([]);
@@ -188,9 +188,17 @@ export default function TabPage({ tab }: { tab: Tab }) {
       show({ text: `Done: ${task.title}`, logIds: [], kind: 'task', at: Date.now(), undoFn: () => tasksApi.setDone(task.id, false) });
     } catch { load(); }
   }
-  async function taskEdit(task: tasksApi.Task, change: Partial<Pick<tasksApi.Task, 'title' | 'due_on'>>) {
-    setTasks(list => list.map(x => (x.id === task.id ? { ...x, ...change } : x)));
-    await tasksApi.updateTask(task.id, change).catch(() => load());
+  async function taskEdit(task: tasksApi.Task, change: tasksApi.TaskChange) {
+    const moved = change.tab_id && change.tab_id !== tab.id;
+    setTasks(list => (moved ? list.filter(x => x.id !== task.id) : list.map(x => (x.id === task.id ? { ...x, ...change } : x))));
+    try {
+      await tasksApi.updateTask(task.id, change);
+      if (moved) {
+        const to = tabs.find(t => t.id === change.tab_id)?.name ?? 'the other list';
+        show({ text: `Moved to ${to}`, logIds: [], kind: 'todo', at: Date.now(),
+               undoFn: async () => { await tasksApi.updateTask(task.id, { tab_id: tab.id }); await load(); } });
+      }
+    } catch { show({ text: 'Couldn’t move it — try again', logIds: [], kind: 'todo', at: Date.now(), error: true }); load(); }
   }
   async function taskDelete(task: tasksApi.Task) {
     if (!confirm(`Delete "${task.title}"?`)) return;
@@ -215,7 +223,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
   if (tabAccounts.length === 0 && inbox.length === 0 && glance.length === 0) {
     return (
       <div className="stack-lg">
-        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} />
+        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs} />
         <p className="muted small">No mail on this tab yet. (Add an account here in Settings, or a rule that sends mail here.)</p>
       </div>
     );
@@ -227,7 +235,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
   return (
     <div className="stack-lg">
-      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} />
+      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs} />
 
       {lines.length === 0 ? (
         <section className="caught-up" aria-label={tab.name}>

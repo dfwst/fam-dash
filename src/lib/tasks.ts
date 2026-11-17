@@ -51,7 +51,10 @@ export async function setDone(id: string, done: boolean) {
   if (error) throw error;
 }
 
-export async function updateTask(id: string, change: Partial<Pick<Task, 'title' | 'due_on' | 'notes'>>) {
+export type TaskChange = Partial<Pick<Task, 'title' | 'due_on' | 'notes' | 'tab_id'>>;
+
+// tab_id moves it to another list (yours or a shared one — the database refuses anyone else's)
+export async function updateTask(id: string, change: TaskChange) {
   const { error } = await supabase.from('tasks').update(change).eq('id', id);
   if (error) throw error;
 }

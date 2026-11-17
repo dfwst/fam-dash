@@ -1,17 +1,20 @@
 import { useState, type ReactNode } from 'react';
 import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
-import { dueLabel, duePresets, type Task } from '../../lib/tasks';
+import { dueLabel, duePresets, type Task, type TaskChange } from '../../lib/tasks';
+
+export type ListOption = { id: string; name: string };
 
 // The tab's To-Do list: your own action items. Tick one off and it's gone (with an Undo).
 // Items made from an email keep a ✉ link back to it.
-export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra }: {
+export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [] }: {
   tasks: Task[];
   title?: string;
   extra?: ReactNode; // shown beside the heading (the To-Do page's "N emails" link)
   onAdd: (title: string) => Promise<void>;
   onDone: (t: Task) => void;
-  onEdit: (t: Task, change: Partial<Pick<Task, 'title' | 'due_on'>>) => void;
+  onEdit: (t: Task, change: TaskChange) => void;
+  lists?: ListOption[]; // where an item can be moved (your tabs + shared ones)
   onDelete: (t: Task) => void;
 }) {
   const [text, setText] = useState('');
@@ -43,7 +46,7 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
                   <Link className="task-mail" to={threadPath(t.account_id, t.thread_id)} aria-label="Open the email">✉</Link>
                 )}
                 {editing === t.id && (
-                  <TaskEdit task={t} onClose={() => setEditing(null)}
+                  <TaskEdit task={t} lists={lists} onClose={() => setEditing(null)}
                             onSave={c => { setEditing(null); onEdit(t, c); }}
                             onDelete={() => { setEditing(null); onDelete(t); }} />
                 )}
@@ -61,13 +64,17 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
   );
 }
 
-function TaskEdit({ task, onSave, onDelete, onClose }: {
-  task: Task; onSave: (c: Partial<Pick<Task, 'title' | 'due_on'>>) => void; onDelete: () => void; onClose: () => void;
+function TaskEdit({ task, lists, onSave, onDelete, onClose }: {
+  task: Task; lists: ListOption[]; onSave: (c: TaskChange) => void; onDelete: () => void; onClose: () => void;
 }) {
   const [title, setTitle] = useState(task.title);
   const [due, setDue] = useState(task.due_on);
+  const [list, setList] = useState(task.tab_id ?? '');
   return (
-    <form className="add-todo task-edit" onSubmit={e => { e.preventDefault(); if (title.trim()) onSave({ title: title.trim(), due_on: due }); }}>
+    <form className="add-todo task-edit" onSubmit={e => {
+      e.preventDefault();
+      if (title.trim()) onSave({ title: title.trim(), due_on: due, ...(list && list !== task.tab_id ? { tab_id: list } : {}) });
+    }}>
       <input autoFocus value={title} maxLength={300} onChange={e => setTitle(e.target.value)} aria-label="To-do" />
       <div className="chips" role="group" aria-label="Due">
         <button type="button" className={due === null ? 'chip active' : 'chip'} onClick={() => setDue(null)}>No date</button>
@@ -76,6 +83,14 @@ function TaskEdit({ task, onSave, onDelete, onClose }: {
         ))}
         <input type="date" className="chip-date" aria-label="Pick a date" value={due ?? ''} onChange={e => setDue(e.target.value || null)} />
       </div>
+      {lists.length > 1 && (
+        <label className="policy">
+          <span className="muted small">List</span>
+          <select value={list} onChange={e => setList(e.target.value)} aria-label="Move to list">
+            {lists.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+          </select>
+        </label>
+      )}
       <div className="row-buttons">
         <button type="submit" className="primary">Save</button>
         <button type="button" className="link" onClick={onClose}>Cancel</button>
