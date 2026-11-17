@@ -103,7 +103,6 @@ export default function AllTodos({ tabs }: { tabs: Tab[] }) {
   return (
     <div className="stack-lg">
       <div>
-        <h2 className="page-title">To-Do</h2>
         <p className="muted small">
           {tasks.length === 0 ? 'Nothing on your list.' : `${tasks.length} open`}
           {overdue > 0 && <> · <span className="task-due late">{overdue} overdue</span></>}

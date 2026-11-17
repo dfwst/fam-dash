@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { NavLink, Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
 import TabPage from './TabPage';
 import Settings from './Settings';
@@ -13,6 +13,9 @@ import { callFn } from '../lib/functions';
 import { clearJoinToken, getJoinToken } from '../lib/join';
 import AboutYou from './AboutYou';
 import AllTodos from './AllTodos';
+import Today from './Today';
+import Nav, { type Place } from './Nav';
+import { waitingByTab } from '../lib/todos';
 
 export type Tab = { id: string; slug: string; name: string; sort_order: number };
 type Me = { display_name: string | null; profile: Record<string, string>; onboarded_at: string | null };
@@ -22,6 +25,8 @@ export default function Shell() {
   const [error, setError] = useState('');
   const [urgentTabs, setUrgentTabs] = useState<Set<string>>(new Set());
   const [remount, setRemount] = useState(0);
+  const [waiting, setWaiting] = useState<Map<string, number>>(new Map()); // emails waiting on you, per tab
+  const { pathname } = useLocation();
 
   // Pull down to refresh: the page on screen reloads its own data if it knows how
   // (keeps your place); otherwise it's opened fresh.
@@ -45,16 +50,18 @@ export default function Shell() {
           .filter((x): x is string => !!x);
         setUrgentTabs(new Set(ids));
       });
-    check();
-    const onFocus = () => document.visibilityState === 'visible' && check();
-    const onRefresh = () => { check(); };
+    const count = () => waitingByTab().then(setWaiting).catch(() => {});
+    check(); count();
+    const onFocus = () => { if (document.visibilityState === 'visible') { check(); count(); } };
+    const onRefresh = () => { check(); count(); };
     document.addEventListener('visibilitychange', onFocus);
     window.addEventListener(REFRESH_EVENT, onRefresh);
     return () => {
       document.removeEventListener('visibilitychange', onFocus);
       window.removeEventListener(REFRESH_EVENT, onRefresh);
     };
-  }, []);
+    // re-count when you move between screens (you probably just handled something)
+  }, [pathname]);
 
   // Who am I in this household? Not a member yet + arrived from an invite → join now.
   const [me, setMe] = useState<Me | null | 'none'>(null);
@@ -110,7 +117,31 @@ export default function Shell() {
   // First time in: a few quick questions so sorting knows what matters to you
   if (!me.onboarded_at && location.pathname !== '/welcome') return <Navigate to="/welcome" replace />;
 
+  // Which of the five places is on screen (the reader and a tab's mail both belong to Mail)
+  const mailTab = tabs.find(t => pathname === `/${t.slug}`);
+  const place: Place | null =
+    pathname === '/today' ? 'today'
+    : mailTab || pathname === '/mail' || pathname.startsWith('/t/') ? 'mail'
+    : pathname === '/todos' ? 'todos'
+    : pathname === '/review' ? 'review'
+    : pathname.startsWith('/settings') || pathname.startsWith('/retire') ? 'you' : null;
+  if (mailTab) try { localStorage.setItem('rlyfe.mailTab', mailTab.slug); } catch { /* private mode */ }
+  let lastSlug: string | null = null;
+  try { lastSlug = localStorage.getItem('rlyfe.mailTab'); } catch { /* private mode */ }
+  const mailHome = tabs.find(t => t.slug === lastSlug) ?? tabs[0];
+  const mailCount = [...waiting.values()].reduce((a, b) => a + b, 0);
+  const TITLES: Record<Place, string> = { today: 'Today', mail: 'Mail', todos: 'To-Do', review: 'Review', you: 'You' };
+  // A full-screen page (reading an email, first-run questions) hides the bar, like a native detail view
+  const immersive = pathname.startsWith('/t/') || pathname === '/welcome';
+
   return (
+    <div className={immersive ? 'app immersive' : 'app'}>
+      {!immersive && (
+        <aside className="rail">
+          <NavLink to="/today" className="rail-brand" aria-label="rlyfe home"><Logo height={24} /></NavLink>
+          <Nav className="rail-nav" current={place} mailCount={mailCount} urgent={urgentTabs.size > 0} />
+        </aside>
+      )}
     <div className="shell">
       {(pull > 0 || refreshing) && (
         <div className="ptr" style={{ height: pull }} aria-live="polite">
@@ -119,21 +150,19 @@ export default function Shell() {
           <span className="ptr-text">{refreshing ? 'Refreshing…' : ready ? 'Release to refresh' : 'Pull to refresh'}</span>
         </div>
       )}
-      <header className="topbar">
-        <NavLink to="/" className="brand" aria-label="rlyfe home"><Logo height={22} /></NavLink>
-        <div className="topbar-actions">
-          <NavLink to="/review" className="link">Review</NavLink>
-          <NavLink to="/settings" className="link">Settings</NavLink>
-          <button className="link" onClick={() => supabase.auth.signOut()}>Sign out</button>
-        </div>
-      </header>
+      {!immersive && place && (
+        <header className="appbar">
+          <h1 className="appbar-title">{TITLES[place]}</h1>
+          <span className="appbar-logo" aria-hidden><Logo height={18} /></span>
+        </header>
+      )}
 
-      {tabs.length > 0 && (
-        <nav className="tabs">
-          <NavLink to="/todos" className={({ isActive }) => (isActive ? 'tab todos active' : 'tab todos')}>✓ To-Do</NavLink>
+      {place === 'mail' && !immersive && tabs.length > 0 && (
+        <nav className="tabs" aria-label="Mail tabs">
           {tabs.map(t => (
-            <NavLink key={t.id} to={`/${t.slug}`} className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
+            <NavLink key={t.id} to={`/${t.slug}`} replace className={({ isActive }) => (isActive ? 'tab active' : 'tab')}>
               {t.name}
+              {(waiting.get(t.id) ?? 0) > 0 && <span className="tab-count">{waiting.get(t.id)}</span>}
               {urgentTabs.has(t.id) && <span className="dot" aria-label="needs attention" />}
             </NavLink>
           ))}
@@ -146,7 +175,9 @@ export default function Shell() {
           <p className="center muted">No tabs to show yet.</p>
         ) : (
           <Routes key={remount}>
-            <Route path="/" element={<Navigate to={`/${tabs[0].slug}`} replace />} />
+            <Route path="/" element={<Navigate to="/today" replace />} />
+            <Route path="/today" element={<Today tabs={tabs} waiting={waiting} name={me.display_name} />} />
+            <Route path="/mail" element={<Navigate to={`/${mailHome.slug}`} replace />} />
             {tabs.map(t => <Route key={t.id} path={`/${t.slug}`} element={<TabPage tab={t} tabs={tabs} />} />)}
             <Route path="/todos" element={<AllTodos tabs={tabs} />} />
             <Route path="/settings" element={<Settings />} />
@@ -158,6 +189,8 @@ export default function Shell() {
           </Routes>
         )}
       </main>
+    </div>
+      {!immersive && <Nav className="bottombar" current={place} mailCount={mailCount} urgent={urgentTabs.size > 0} />}
     </div>
   );
 }

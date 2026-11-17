@@ -149,7 +149,6 @@ export default function Settings() {
 
   return (
     <section className="stack">
-      <h2 className="page-title">Settings</h2>
       <nav className="subnav" aria-label="Settings sections">
         {SECTIONS.map(x => (
           <button key={x.id} className={section === x.id ? 'subnav-item active' : 'subnav-item'}
@@ -167,6 +166,7 @@ export default function Settings() {
             Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
           </p>
           <GmailOpenTest />
+          <button className="signout" onClick={() => supabase.auth.signOut()}>Sign out</button>
         </div>
       )}
 
