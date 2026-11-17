@@ -361,3 +361,4 @@ body { overflow-wrap: anywhere; }
   border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .purpose .primary { justify-self: start; }
 .invite input { width: 100%; box-sizing: border-box; }
+.invite select { width: 100%; font: inherit; font-size: 16px; min-height: 40px; padding: 6px 8px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); color: var(--text); }
