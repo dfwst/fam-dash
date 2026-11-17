@@ -11,9 +11,10 @@ export type Task = {
   account_id: string | null;
   thread_id: string | null;
   created_at: string;
+  sort_order: number | null; // your order in the list (drag to rearrange); null = not placed yet
 };
 
-const COLS = 'id, tab_id, title, notes, due_on, done_at, account_id, thread_id, created_at';
+const COLS = 'id, tab_id, title, notes, due_on, done_at, account_id, thread_id, created_at, sort_order';
 
 let household: Promise<string> | null = null;
 function householdId(): Promise<string> {
@@ -25,10 +26,11 @@ function householdId(): Promise<string> {
   return household;
 }
 
-// Open items on a tab: dated ones first (soonest first), then the rest, newest first
+// Open items on a tab: the order you dragged them into first; then dated ones (soonest first), then the rest, newest first
 export async function loadTasks(tabId: string): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks').select(COLS)
     .eq('tab_id', tabId).is('done_at', null)
+    .order('sort_order', { ascending: true, nullsFirst: false })
     .order('due_on', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false });
   if (error) throw error;
@@ -51,7 +53,7 @@ export async function setDone(id: string, done: boolean) {
   if (error) throw error;
 }
 
-export type TaskChange = Partial<Pick<Task, 'title' | 'due_on' | 'notes' | 'tab_id'>>;
+export type TaskChange = Partial<Pick<Task, 'title' | 'due_on' | 'notes' | 'tab_id' | 'sort_order'>>;
 
 // tab_id moves it to another list (yours or a shared one — the database refuses anyone else's)
 export async function updateTask(id: string, change: TaskChange) {
@@ -95,8 +97,40 @@ export function dueLabel(due: string | null): { text: string; late: boolean } | 
 // Every open item you can see, across all tabs (yours + Shared) — for the To-Do page
 export async function loadAllTasks(): Promise<Task[]> {
   const { data, error } = await supabase.from('tasks').select(COLS).is('done_at', null)
+    .order('sort_order', { ascending: true, nullsFirst: false })
     .order('due_on', { ascending: true, nullsFirst: false })
     .order('created_at', { ascending: false });
   if (error) throw error;
   return data as Task[];
+}
+
+// ── Drag to rearrange / move ────────────────────────────────────────
+export type DropSpot = { list: string; index: number }; // index among the list's OTHER items
+
+/**
+ * Put `task` at `spot` and number that whole list 1…n (so the order sticks).
+ * Returns the new task array (destination list regrouped in its new order) and the
+ * per-item changes to save. Only items whose place or list actually changed are saved.
+ */
+export function placeTask(all: Task[], task: Task, spot: DropSpot) {
+  const others = all.filter(t => t.tab_id === spot.list && t.id !== task.id);
+  const moved = { ...task, tab_id: spot.list };
+  const ordered = [...others.slice(0, spot.index), moved, ...others.slice(spot.index)]
+    .map((t, i) => ({ ...t, sort_order: i + 1 }));
+  const before = new Map(all.map(t => [t.id, t]));
+  const changes = ordered.flatMap(t => {
+    const was = before.get(t.id)!;
+    const c: TaskChange = {};
+    if (was.sort_order !== t.sort_order) c.sort_order = t.sort_order;
+    if (was.tab_id !== t.tab_id) c.tab_id = t.tab_id;
+    return Object.keys(c).length ? [{ id: t.id, change: c }] : [];
+  });
+  const ids = new Set(ordered.map(t => t.id));
+  // Lists render in array order, so the destination list goes in as one block in its new order
+  const next = [...all.filter(t => !ids.has(t.id)), ...ordered];
+  return { next, changes };
+}
+
+export async function saveChanges(changes: { id: string; change: TaskChange }[]) {
+  await Promise.all(changes.map(c => updateTask(c.id, c.change)));
 }

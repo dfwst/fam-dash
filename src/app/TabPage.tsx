@@ -6,6 +6,7 @@ import { ago, loadTabThreads, splitTodos, toLines, type TodoThread, threadPath }
 import * as act from '../lib/actions';
 import TodoRow, { type RowAction } from './todo/TodoRow';
 import GlanceRow from './todo/GlanceRow';
+import { DragGhost, useTaskDrag } from '../lib/useTaskDrag';
 import TaskList from './todo/TaskList';
 import * as tasksApi from '../lib/tasks';
 import { useOnRefresh } from '../lib/refresh';
@@ -42,6 +43,14 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   const [showSnoozed, setShowSnoozed] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  // Drag a to-do up or down to rearrange this tab's list (moving to another list: the To-Do page)
+  const { drag, press } = useTaskDrag((task, spot) => {
+    if (spot.list !== tab.id) return;
+    const { next, changes } = tasksApi.placeTask(tasks, task, spot);
+    if (!changes.length) return;
+    setTasks(next);
+    tasksApi.saveChanges(changes).catch(() => load());
+  });
 
   const load = useCallback(async () => {
     try {
@@ -226,7 +235,8 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
   if (tabAccounts.length === 0 && inbox.length === 0 && glance.length === 0) {
     return (
       <div className="stack-lg">
-        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs} />
+        <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs}
+                  listId={tab.id} onPress={press} over={drag?.over} draggingId={drag?.task.id} />
         <p className="muted small">No mail on this tab yet. (Add an account here in Settings, or a rule that sends mail here.)</p>
       </div>
     );
@@ -238,7 +248,8 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
 
   return (
     <div className="stack-lg">
-      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs} />
+      <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} lists={tabs}
+                  listId={tab.id} onPress={press} over={drag?.over} draggingId={drag?.task.id} />
 
       {lines.length === 0 ? (
         <section className="caught-up" aria-label={tab.name}>
@@ -318,6 +329,7 @@ export default function TabPage({ tab, tabs = [] }: { tab: Tab; tabs?: Tab[] }) 
         </section>
       )}
 
+      <DragGhost drag={drag} />
       {toast && (
         <div className={toast.error ? 'toast error' : 'toast'} role="status">
           <span>{toast.text}</span>

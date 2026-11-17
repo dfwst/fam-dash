@@ -1,13 +1,13 @@
 import { useState, type ReactNode, type PointerEvent } from 'react';
 import { threadPath } from '../../lib/todos';
 import { Link } from 'react-router-dom';
-import { dueLabel, duePresets, type Task, type TaskChange } from '../../lib/tasks';
+import { dueLabel, duePresets, type DropSpot, type Task, type TaskChange } from '../../lib/tasks';
 
 export type ListOption = { id: string; name: string };
 
 // The tab's To-Do list: your own action items. Tick one off and it's gone (with an Undo).
 // Items made from an email keep a ✉ link back to it.
-export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [], listId, onGrab, dropping, draggingId }: {
+export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title = 'To-Do', extra, lists = [], listId, onPress, over, draggingId }: {
   tasks: Task[];
   title?: string;
   extra?: ReactNode; // shown beside the heading (the To-Do page's "N emails" link)
@@ -15,11 +15,11 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
   onDone: (t: Task) => void;
   onEdit: (t: Task, change: TaskChange) => void;
   lists?: ListOption[]; // where an item can be moved (your tabs + shared ones)
-  // Drag between lists (To-Do page): this section is a drop target; the ⋮⋮ handle starts a drag
+  // Drag to rearrange / move (see useTaskDrag): this section is a drop target, each row a handle
   listId?: string;
-  onGrab?: (t: Task, e: PointerEvent) => void;
-  dropping?: boolean;      // a dragged item is over this list
-  draggingId?: string;     // the item being dragged (dimmed in place)
+  onPress?: (t: Task, e: PointerEvent<HTMLElement>) => void;
+  over?: DropSpot | null;  // where a dragged item would land right now
+  draggingId?: string;     // the item being dragged (shown as a gap in place)
   onDelete: (t: Task) => void;
 }) {
   const [text, setText] = useState('');
@@ -32,8 +32,15 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
     try { await onAdd(text); setText(''); } finally { setSaving(false); }
   }
 
+  // Insertion line: before the item at over.index (counting the list WITHOUT the dragged one), or after the last
+  const here = !!over && !!listId && over.list === listId;
+  const others = tasks.filter(t => t.id !== draggingId);
+  const lineBefore = here ? others[over!.index]?.id : undefined;
+  const lineAfter = here && over!.index >= others.length ? others[others.length - 1]?.id : undefined;
+  const fromElsewhere = here && !tasks.some(t => t.id === draggingId);
+
   return (
-    <section className={`stack tasks${dropping ? ' drop-over' : ''}`} data-list={listId}>
+    <section className={`stack tasks${fromElsewhere ? ' drop-over' : ''}`} data-list={listId}>
       <div className="tasks-head">
         <h3 className="section-title">{title}</h3>
         {extra}
@@ -43,8 +50,11 @@ export default function TaskList({ tasks, onAdd, onDone, onEdit, onDelete, title
           {tasks.map(t => {
             const due = dueLabel(t.due_on);
             return (
-              <li key={t.id} className={`task${draggingId === t.id ? ' dragging' : ''}`}>
-                {onGrab && <span className="task-grip" aria-hidden title="Drag to another list" onPointerDown={e => onGrab(t, e)}>⋮⋮</span>}
+              <li key={t.id} data-task={t.id}
+                  className={`task${onPress ? ' draggable' : ''}${draggingId === t.id ? ' dragging' : ''}`
+                    + `${lineBefore === t.id ? ' line-before' : ''}${lineAfter === t.id ? ' line-after' : ''}`}
+                  onPointerDown={onPress && editing !== t.id ? e => onPress(t, e) : undefined}>
+                {onPress && <span className="task-grip" aria-hidden>⋮⋮</span>}
                 <input type="checkbox" aria-label={`Done: ${t.title}`} onChange={() => onDone(t)} />
                 <button className="task-title" onClick={() => setEditing(e => (e === t.id ? null : t.id))}>{t.title}</button>
                 {due && <span className={due.late ? 'task-due late' : 'task-due'}>{due.text}</span>}
