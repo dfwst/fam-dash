@@ -15,6 +15,7 @@ export type Sort = {
   group_key: string | null;
   by: 'rule' | 'ai' | 'fallback' | 'learned';
   model?: string;
+  ruleIds?: string[]; // household rules Claude judged this email to match (smart matching)
 };
 
 // Always priority, never archived: declined payments, security, Resi (church livestream).

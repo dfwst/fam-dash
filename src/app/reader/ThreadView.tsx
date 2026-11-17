@@ -21,6 +21,7 @@ type Msg = {
 type ThreadData = {
   threadId: string; account: string; provider: 'google' | 'microsoft' | 'imap'; webLink: string | null;
   unsubscribe: 'one-click' | 'email' | 'link' | null;
+  canAct: boolean; // false: a household rule shared this from someone else's mailbox (read + To-Do only)
   subject: string; messages: Msg[];
 };
 
@@ -44,10 +45,13 @@ export default function ThreadView() {
   const [note, setNote] = useState('');
   const [version, setVersion] = useState(0); // bump to re-read the thread after a reply
 
+  // A To-Do from this email goes on the tab a rule put it on, else its account's tab
   useEffect(() => {
-    supabase.from('connected_accounts').select('default_tab_id').eq('id', accountId).maybeSingle()
-      .then(({ data }) => setTabId(data?.default_tab_id ?? null));
-  }, [accountId]);
+    Promise.all([
+      supabase.from('email_threads').select('tab_id').eq('account_id', accountId).eq('thread_id', threadId).maybeSingle(),
+      supabase.from('connected_accounts').select('default_tab_id').eq('id', accountId).maybeSingle(),
+    ]).then(([t, a]) => setTabId(t.data?.tab_id ?? a.data?.default_tab_id ?? null));
+  }, [accountId, threadId]);
 
   useEffect(() => {
     callFn<ThreadData>('thread-read', { accountId, threadId })
@@ -162,11 +166,15 @@ export default function ThreadView() {
                   }} />
       ) : (
         <div className="reader-actions">
-          <button className="primary" disabled={busy} onClick={() => { setReplying(true); setAdding(false); setRemind(false); }}>Reply</button>
-          <button disabled={busy} onClick={() => run(() => act.done(ref))}>Done</button>
-          <button disabled={busy} onClick={() => run(() => act.ignore(ref))}>Ignore</button>
+          {data.canAct !== false && <>
+            <button className="primary" disabled={busy} onClick={() => { setReplying(true); setAdding(false); setRemind(false); }}>Reply</button>
+            <button disabled={busy} onClick={() => run(() => act.done(ref))}>Done</button>
+            <button disabled={busy} onClick={() => run(() => act.ignore(ref))}>Ignore</button>
+          </>}
           <button disabled={busy} onClick={() => { setAdding(a => !a); setRemind(false); }}>+ To-Do</button>
-          <button disabled={busy} onClick={() => { setRemind(r => !r); setAdding(false); }}>Remind me</button>
+          {data.canAct !== false
+            ? <button disabled={busy} onClick={() => { setRemind(r => !r); setAdding(false); }}>Remind me</button>
+            : <span className="muted small">Shared by a household rule from {data.account}</span>}
         </div>
       )}
       {adding && (
@@ -175,7 +183,7 @@ export default function ThreadView() {
                    setAdding(false);
                    try {
                      await addTask({ title: todo.title, due_on: todo.due_on, tab_id: tabId, account_id: accountId, thread_id: threadId });
-                     if (todo.alsoDone) await run(() => act.done(ref));
+                     if (todo.alsoDone && data.canAct !== false) await run(() => act.done(ref));
                      else setNote('Added to To-Do.');
                    } catch (e) { setError(e instanceof Error ? e.message : 'failed'); }
                  }} /></div>

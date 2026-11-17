@@ -64,8 +64,8 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
   const up = () => {
     if (!start.current) return;
     start.current = null;
-    if (dx > SWIPE) onAction({ kind: 'done', thread: t });
-    else if (dx < -SWIPE) setRemind(true);
+    if (dx > SWIPE && acct) onAction({ kind: 'done', thread: t });
+    else if (dx < -SWIPE && acct) setRemind(true);
     setDx(0);
   };
 
@@ -91,8 +91,11 @@ function ThreadRow({ t, acct, showAccount, onAction }: {
           <div className="todo-summary">{t.summary || t.snippet}</div>
         </Link>
         <div className="actions">
-          <button onClick={() => onAction({ kind: 'done', thread: t })}>Done</button>
-          <button onClick={() => onAction({ kind: 'ignore', thread: t })}>Ignore</button>
+          {/* No account = shared to you by a household rule from someone else's mailbox: read + To-Do only */}
+          {acct ? <>
+            <button onClick={() => onAction({ kind: 'done', thread: t })}>Done</button>
+            <button onClick={() => onAction({ kind: 'ignore', thread: t })}>Ignore</button>
+          </> : <span className="muted small">Shared</span>}
           <button onClick={() => { setAdding(a => !a); setRemind(false); }} aria-expanded={adding}>+ To-Do</button>
           {href && <a className="open" href={href} {...(outlook || opensInNewTab() ? { target: '_blank', rel: 'noreferrer' } : {})}>{outlook ? 'Outlook' : 'Gmail'} ↗</a>}
         </div>
@@ -134,7 +137,7 @@ export default function TodoRow({ line, accounts, showAccount, onAction }: {
           {!open && <div className="todo-summary">Latest: {newest.summary || newest.subject}</div>}
         </button>
         <div className="actions">
-          <button onClick={() => line.threads.forEach(t => onAction({ kind: 'done', thread: t }))}>
+          <button onClick={() => line.threads.filter(t => accounts.has(t.account_id)).forEach(t => onAction({ kind: 'done', thread: t }))}>
             Done all {line.threads.length}
           </button>
           <button onClick={() => setOpen(o => !o)}>{open ? 'Collapse' : 'Show them'}</button>

@@ -44,10 +44,11 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
   const load = useCallback(async () => {
     try {
-      const [accts, taskList] = await Promise.all([loadAccounts(tab.id), tasksApi.loadTasks(tab.id)]);
+      // Every mailbox you can use (rule-routed mail can come from any of them); this tab's are a subset
+      const [accts, taskList] = await Promise.all([loadAccounts(), tasksApi.loadTasks(tab.id)]);
       setAccounts(accts);
       setTasks(taskList);
-      const r = await loadTabThreads(accts.map(a => a.id));
+      const r = await loadTabThreads(accts.filter(a => a.default_tab_id === tab.id).map(a => a.id), tab.id);
       setInbox(r.inbox);
       setGlance(r.glance);
     } catch (e) {
@@ -84,7 +85,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
       if (a.kind === 'todo') {
         const acct = accounts?.find(x => x.id === t.account_id);
         const task = await tasksApi.addTask({
-          title: a.todo.title, due_on: a.todo.due_on, tab_id: acct?.default_tab_id ?? tab.id,
+          title: a.todo.title, due_on: a.todo.due_on, tab_id: t.tab_id ?? acct?.default_tab_id ?? tab.id,
           account_id: t.account_id, thread_id: t.thread_id,
         });
         if (task.tab_id === tab.id) setTasks(list => [...list, task]);
@@ -203,18 +204,19 @@ export default function TabPage({ tab }: { tab: Tab }) {
   }
 
   const byId = useMemo(() => new Map((accounts ?? []).map(a => [a.id, a])), [accounts]);
-  const showAccount = (accounts?.length ?? 0) > 1;
+  const tabAccounts = useMemo(() => (accounts ?? []).filter(a => a.default_tab_id === tab.id), [accounts, tab.id]);
+  const showAccount = tabAccounts.length > 1 || (inbox ?? []).some(t => t.tab_id === tab.id);
   const { todo, waiting, snoozed } = useMemo(() => splitTodos(inbox ?? []), [inbox]);
   const lines = useMemo(() => toLines(todo), [todo]);
 
   if (error) return <p className="error">{error}</p>;
   if (!accounts || !inbox) return <p className="muted">Loading…</p>;
 
-  if (accounts.length === 0) {
+  if (tabAccounts.length === 0 && inbox.length === 0 && glance.length === 0) {
     return (
       <div className="stack-lg">
         <TaskList tasks={tasks} onAdd={addTask} onDone={taskDone} onEdit={taskEdit} onDelete={taskDelete} />
-        <p className="muted small">No mail accounts on this tab yet.</p>
+        <p className="muted small">No mail on this tab yet. (Add an account here in Settings, or a rule that sends mail here.)</p>
       </div>
     );
   }

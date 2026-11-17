@@ -39,6 +39,8 @@ export interface Mailbox {
   messageBody(ref: unknown): Promise<string>;
   /** A short plain new email from this account (for "mailto:" unsubscribes) */
   sendNew(to: string, subject: string, text: string): Promise<void>;
+  /** Put a label on a thread, creating the label if needed (Gmail only) */
+  addLabel?(threadId: string, name: string): Promise<void>;
   /** Close any open connection (IMAP); a no-op for web APIs */
   close?(): Promise<void>;
 }
@@ -65,9 +67,27 @@ export async function openMailbox(admin: SupabaseClient, acct: AccountRef): Prom
 // ── Gmail ───────────────────────────────────────────────────────────
 
 function gmailMailbox(token: string, email: string): Mailbox {
+  // Label name → id, looked up once per call (created if missing)
+  let labels: Promise<Map<string, string>> | null = null;
+  const labelId = async (name: string) => {
+    labels ??= gmail<{ labels?: { id: string; name: string }[] }>('labels', token)
+      .then(r => new Map((r.labels ?? []).map(l => [l.name.toLowerCase(), l.id])));
+    const map = await labels;
+    const hit = map.get(name.toLowerCase());
+    if (hit) return hit;
+    const created = await gmailRequest<{ id: string }>('POST', 'labels', token, {
+      body: { name, labelListVisibility: 'labelShow', messageListVisibility: 'show' },
+    });
+    map.set(name.toLowerCase(), created.id);
+    return created.id;
+  };
+
   return {
     provider: 'google',
     email,
+    async addLabel(threadId, name) {
+      await modifyThread(threadId, token, { addLabelIds: [await labelId(name)] });
+    },
     async listInbox(days) {
       const out: { id: string; version: string }[] = [];
       let pageToken: string | undefined;

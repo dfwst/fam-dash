@@ -24,6 +24,7 @@ import { applyRules, safetyCheck, type Sort } from '../_shared/rules.ts';
 import { classifyWithClaude, type Correction } from '../_shared/classify.ts';
 import { flagArrival } from '../_shared/retire.ts';
 import { loadPerson } from '../_shared/people.ts';
+import { appliesTo, exactMatch, loadRules, markMatch } from '../_shared/household-rules.ts';
 
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '';
 const SELF = `${SB_URL}/functions/v1/sync-account`;
@@ -150,6 +151,10 @@ async function sortPending(
     .eq('owner_id', acct.owner_id).not('user_bucket', 'is', null)
     .order('updated_at', { ascending: false }).limit(200);
   const person = await loadPerson(admin, acct.owner_id);
+  // Household rules that apply to this mailbox (a non-sharing rule only covers its creator's mail)
+  const hRules = (await loadRules(admin, acct.household_id)).filter(r => appliesTo(r, acct.owner_id));
+  const smartRules = hRules.filter(r => r.description?.trim())
+    .map(r => ({ id: r.id, name: r.name, description: r.description!.trim() }));
   const corrections = (corrRows ?? []) as Correction[];
   const examplesFor = (fromEmail: string) => {
     const domain = '@' + (fromEmail.split('@')[1] ?? '');
@@ -207,6 +212,9 @@ async function sortPending(
           : senderPref ? `You sort this sender as ${['', 'Junk', 'Glance', 'Real'][pref]}`
           : `You sort ${domain} as ${['', 'Junk', 'Glance', 'Real'][pref]}`;
 
+        // Household rules: exact matches first (free); smart ones ride along on the Claude call
+        const exact = exactMatch(hRules, { fromEmail: f.fromEmail, fromName: f.fromName, subject: f.subject, to: f.to, text: f.text });
+
         let sort: Sort | null = pref === 1 || pref === 2
           ? { bucket: pref, priority: false, category: 'learned', group_key: null, by: 'learned',
               summary: f.snippet.slice(0, 140), reason: prefReason }
@@ -216,7 +224,7 @@ async function sortPending(
           bump(sort.by === 'learned' ? 'by_learned' : 'by_rule');
         } else {
           // Learned "Real" still goes to Claude — for the 2–3 line summary
-          const ai = await classifyWithClaude(f, acct, examplesFor(f.fromEmail), person);
+          const ai = await classifyWithClaude(f, acct, examplesFor(f.fromEmail), person, exact ? [] : smartRules);
           sort = pref === 3 ? { ...ai.sort, bucket: 3, by: 'learned', reason: prefReason } : ai.sort;
           bump(sort.by === 'ai' ? 'by_ai' : sort.by === 'learned' ? 'by_learned' : 'fallback');
           await admin.from('ai_usage').insert({
@@ -237,6 +245,13 @@ async function sortPending(
           classified_at: new Date().toISOString(), classified_run_id: runId,
         });
         bump('sorted');
+
+        // A rule matched → its tab, Real if the rule says so, shared if it shares, Gmail label
+        const hit = exact ?? hRules.find(r => sort!.ruleIds?.includes(r.id));
+        if (hit) {
+          await markMatch(admin, acct.id, row.thread_id, hit, mb);
+          bump('rule_matches');
+        }
       } catch (e) {
         if (e instanceof NeedsReconnect) throw e;
         const msg = e instanceof Error ? e.message : String(e);

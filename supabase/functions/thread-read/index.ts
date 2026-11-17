@@ -23,8 +23,20 @@ Deno.serve(async (req) => {
   if (ctx instanceof Response) return ctx;
 
   const { accountId, threadId } = await req.json().catch(() => ({}));
-  // Only accounts this person may see (their own, or shared)
-  const acct = await accountFor<{ email: string; provider: 'google' | 'microsoft' | 'imap' }>(ctx, accountId);
+  // Accounts this person may see (their own, or shared) — or ONE email a household rule shared
+  type A = { id: string; email: string; provider: 'google' | 'microsoft' | 'imap' };
+  let acct: A | null = await accountFor<A>(ctx, accountId);
+  const canAct = !!acct; // reply / Done / Ignore only in mailboxes you can use
+  if (!acct && typeof threadId === 'string') {
+    const { data: shared } = await ctx.admin.from('email_threads').select('thread_id')
+      .eq('account_id', String(accountId ?? '')).eq('thread_id', threadId)
+      .eq('household_id', ctx.householdId).eq('shared', true).maybeSingle();
+    if (shared) {
+      const { data } = await ctx.admin.from('connected_accounts').select('id, email, provider')
+        .eq('id', String(accountId)).eq('household_id', ctx.householdId).maybeSingle();
+      acct = data as A | null;
+    }
+  }
   if (!acct || !isValidThreadId(acct.provider, threadId)) return json({ error: 'not-found' }, 404);
 
   try {
@@ -60,7 +72,8 @@ Deno.serve(async (req) => {
       account: acct.email,
       provider: acct.provider,
       webLink: t.webLink ?? null, // Outlook on the web link (Microsoft only)
-      unsubscribe,                // 'one-click' | 'email' | 'link' | null
+      unsubscribe: canAct ? unsubscribe : null, // 'one-click' | 'email' | 'link' | null
+      canAct,                     // false: a rule-shared email from someone else's mailbox (read + To-Do only)
       subject: messages[0]?.subject || '(no subject)',
       messages,
     });

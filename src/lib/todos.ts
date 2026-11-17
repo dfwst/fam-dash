@@ -23,6 +23,8 @@ export type TodoThread = {
   snoozed_until: string | null;
   acted: 'done' | 'ignored' | 'archived' | null; // done/ignored = you handled it; archived = morning cleanup
   web_link: string | null; // Outlook on the web (Microsoft accounts)
+  tab_id: string | null;   // a household rule put it on this tab (overrides the account's tab)
+  shared: boolean;         // a rule shared it with the household
 };
 
 // In-app reader URL. Microsoft conversation ids contain / + = so they must be encoded.
@@ -30,7 +32,7 @@ export const threadPath = (accountId: string, threadId: string) =>
   `/t/${accountId}/${encodeURIComponent(threadId)}`;
 
 const COLS = 'account_id, thread_id, subject, from_name, from_email, summary, snippet, bucket, user_bucket, '
-  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until, acted, web_link';
+  + 'priority, category, group_key, last_message_at, last_from_me, unread, in_inbox, snoozed_until, acted, web_link, tab_id, shared';
 
 // Snoozed and the time has come → back at the top of the list
 export const isResurfaced = (t: TodoThread) => !!t.snoozed_until && Date.parse(t.snoozed_until) <= Date.now();
@@ -42,27 +44,34 @@ export const effectiveBucket = (t: TodoThread) => t.user_bucket ?? t.bucket;
 export const isUrgent = (t: TodoThread) =>
   t.priority && (t.category === 'payment_issue' || t.category === 'security');
 
-export async function loadTabThreads(accountIds: string[]) {
-  if (!accountIds.length) return { inbox: [] as TodoThread[], glance: [] as TodoThread[] };
+// A tab shows: its accounts' mail (except emails a rule moved to another tab) + emails a rule
+// moved here from any account — including ones a rule shared from someone else's mailbox.
+export async function loadTabThreads(accountIds: string[], tabId?: string) {
   const weekAgo = new Date(Date.now() - 7 * 86_400_000).toISOString();
-  const [inbox, glance] = await Promise.all([
-    supabase.from('email_threads').select(COLS)
-      .in('account_id', accountIds).eq('in_inbox', true).eq('status', 'classified')
-      .order('last_message_at', { ascending: false }).limit(1000),
-    // Glance items get archived in M4, so the feed doesn't require in_inbox
-    supabase.from('email_threads').select(COLS)
-      .in('account_id', accountIds).eq('status', 'classified').gte('last_message_at', weekAgo)
-      .or('user_bucket.eq.2,and(user_bucket.is.null,bucket.eq.2)')
-      .order('last_message_at', { ascending: false }).limit(100),
-  ]);
-  if (inbox.error) throw inbox.error;
-  if (glance.error) throw glance.error;
+  const none = Promise.resolve({ data: [] as unknown[], error: null });
+  const byAccount = (q: ReturnType<typeof base>) => (accountIds.length ? q.in('account_id', accountIds) : none);
+  const byRule = (q: ReturnType<typeof base>) => (tabId ? q.eq('tab_id', tabId) : none);
+  const base = () => supabase.from('email_threads').select(COLS).eq('status', 'classified');
+  const inboxQ = () => base().eq('in_inbox', true).order('last_message_at', { ascending: false }).limit(1000);
+  // Glance items get archived in M4, so the feed doesn't require in_inbox
+  const glanceQ = () => base().gte('last_message_at', weekAgo)
+    .or('user_bucket.eq.2,and(user_bucket.is.null,bucket.eq.2)')
+    .order('last_message_at', { ascending: false }).limit(100);
+
+  const [a, b, c, d] = await Promise.all([byAccount(inboxQ()), byRule(inboxQ()), byAccount(glanceQ()), byRule(glanceQ())]);
+  for (const r of [a, b, c, d]) if (r.error) throw r.error;
   // COLS is built by concatenation, so supabase-js can't infer the row type — assert it
+  const merge = (own: unknown[] | null, ruled: unknown[] | null) => {
+    const seen = new Set<string>();
+    return [...((own ?? []) as TodoThread[]).filter(t => !t.tab_id || t.tab_id === tabId), ...((ruled ?? []) as TodoThread[])]
+      .filter(t => { const k = t.account_id + t.thread_id; if (seen.has(k)) return false; seen.add(k); return true; })
+      .sort((x, y) => (y.last_message_at ?? '').localeCompare(x.last_message_at ?? ''));
+  };
   return {
-    inbox: (inbox.data ?? []) as unknown as TodoThread[],
+    inbox: merge(a.data, b.data),
     // Glance stays visible after the morning cleanup archives it ('archived'), but once
     // YOU tap Done or Ignore it's handled — gone from the feed (Undo brings it back)
-    glance: ((glance.data ?? []) as unknown as TodoThread[]).filter(t => t.acted !== 'done' && t.acted !== 'ignored'),
+    glance: merge(c.data, d.data).filter(t => t.acted !== 'done' && t.acted !== 'ignored'),
   };
 }
 

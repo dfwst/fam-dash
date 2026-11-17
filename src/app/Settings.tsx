@@ -9,6 +9,7 @@ import { loadAccounts, serviceName, type Account } from '../lib/accounts';
 import AccountPurpose from './AccountPurpose';
 import AboutYou from './AboutYou';
 import Household from './Household';
+import Rules from './Rules';
 
 const ERRORS: Record<string, string> = {
   access_denied: 'Google sign-in was cancelled.',
@@ -228,6 +229,7 @@ export default function Settings() {
 
       {me && <AboutYou me={me} onSaved={m => setMe(x => (x ? { ...x, ...m } : x))} />}
 
+      <Rules />
       <Household />
 
       <GmailOpenTest />
