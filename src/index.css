@@ -806,3 +806,115 @@ button.primary { border-radius: 12px; padding: 0 18px; letter-spacing: -.005em; 
 
 h3 { word-break: normal; }
 .section-head { flex-wrap: wrap; align-items: center; row-gap: 8px; padding: 0 4px; }
+
+/* ══ Forms: one system for every Settings form ══════════════════════════════
+   Label above the field (dark, readable), help text under it (muted),
+   44px+ touch targets, one input look, choices spelled out as cards. */
+.field { display: grid; gap: 6px; color: inherit; font-size: inherit; min-width: 0; }
+.field-label, .field > span.muted.small:first-child, .choices legend {
+  font-size: .86rem; font-weight: 600; color: var(--text); letter-spacing: -.005em;
+}
+.field-help { margin: 0; font-size: .82rem; line-height: 1.45; color: var(--muted); font-weight: 400; }
+.field input, .field select, .field textarea, .about-you textarea, .add-todo textarea, .reply-text,
+.purpose input, .connect-imap input, .connect-imap select, .cleanup select {
+  width: 100%; box-sizing: border-box; min-height: 46px; padding: 11px 13px; font: inherit; color: var(--text);
+  background: var(--bg); border: 1px solid var(--line); border-radius: 12px; transition: border-color .15s, box-shadow .15s;
+}
+.field textarea, .about-you textarea, .add-todo textarea { min-height: 92px; line-height: 1.45; resize: vertical; }
+.field input:focus, .field select:focus, .field textarea:focus, .about-you textarea:focus, .add-todo textarea:focus,
+.purpose input:focus, .connect-imap input:focus, .connect-imap select:focus {
+  outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.field input::placeholder, .field textarea::placeholder, .about-you textarea::placeholder, .add-todo textarea::placeholder { color: color-mix(in srgb, var(--muted) 75%, transparent); }
+.field select, .connect-imap select, .cleanup select {
+  -webkit-appearance: none; appearance: none; padding-right: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' fill='none' stroke='%2373787e' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1.5 5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 14px center;
+}
+.nick-state { color: var(--accent); font-weight: 600; margin-left: 6px; }
+
+/* A form laid out inside a card / an opened account */
+.add-todo.invite, .about-you form, .acct-form { gap: 18px; }
+.acct-form { display: grid; grid-template-columns: minmax(0, 1fr); padding: 16px 0 4px; }
+.list > li.row { align-items: flex-start; }
+.acct-head { padding: 2px 0; }
+
+/* Choices spelled out (Morning cleanup) */
+.choices { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; min-width: 0; }
+.choices legend { padding: 0; margin-bottom: 8px; }
+.choice {
+  display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; cursor: pointer; color: inherit; font-size: inherit;
+  background: var(--bg); border: 1.5px solid var(--line); border-radius: 14px; transition: border-color .15s, background .15s;
+}
+.choice.on { border-color: var(--accent); background: var(--accent-soft); }
+.choice input[type=radio] {
+  -webkit-appearance: none; appearance: none; flex: none; width: 20px; height: 20px; min-height: 0; margin: 2px 0 0; padding: 0;
+  border-radius: 50%; border: 1.75px solid color-mix(in srgb, var(--muted) 60%, transparent); background: transparent;
+  display: grid; place-items: center;
+}
+.choice input[type=radio]::after { content: ''; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); transform: scale(0); transition: transform .18s var(--ease); }
+.choice input[type=radio]:checked { border-color: var(--accent); }
+.choice input[type=radio]:checked::after { transform: scale(1); }
+.choice-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.choice-title { font-weight: 600; font-size: .95rem; color: var(--text); }
+.choice-help { font-size: .85rem; line-height: 1.4; color: var(--muted); }
+.choices .field-help { margin-top: 4px; }
+
+/* On/off switch */
+.switch-row { display: flex; align-items: center; justify-content: space-between; gap: 14px; color: inherit; font-size: inherit; cursor: pointer; }
+input.switch {
+  -webkit-appearance: none; appearance: none; flex: none; position: relative; width: 48px; height: 28px; min-height: 0; margin: 0; padding: 0;
+  border: 0; border-radius: 999px; background: color-mix(in srgb, var(--muted) 38%, transparent); cursor: pointer; transition: background .2s;
+}
+input.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 22px; height: 22px; border-radius: 50%; background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .25); transition: transform .2s var(--ease); }
+input.switch:checked { background: var(--accent); }
+input.switch:checked::after { transform: translateX(20px); }
+.check-row input[type=checkbox], .check-line input[type=checkbox] { width: 20px; height: 20px; min-height: 0; padding: 0; accent-color: var(--accent); }
+.check-row { gap: 12px; color: inherit; font-size: .95rem; line-height: 1.4; }
+
+/* Row links at the bottom of an account */
+.acct-links { display: grid; grid-template-columns: minmax(0, 1fr); border-top: 1px solid var(--line); }
+.acct-link {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 48px; padding: 0 2px; width: 100%;
+  background: none; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; color: var(--text);
+  font: inherit; font-weight: 500; text-align: left; text-decoration: none;
+}
+.acct-links > :last-child { border-bottom: 0; }
+.acct-link.danger { color: var(--danger); }
+.acct-link:active { transform: none; opacity: .7; }
+
+/* "Help rlyfe sort this account" prompt */
+.purpose { background: var(--accent-soft); border-radius: 14px; padding: 14px; gap: 10px; }
+.purpose .chips { flex-wrap: wrap; overflow: visible; }
+.purpose .chip { background: var(--surface); }
+.purpose .chip.active { background: var(--accent); color: #fff; }
+@media (prefers-color-scheme: dark) { .purpose .chip.active { color: #0f2a23; } }
+.purpose input { background: var(--surface); }
+
+/* ── How rlyfe sorts (Important / Glance / Noise) ── */
+.guide { background: var(--surface); border: 1px solid var(--card-border); box-shadow: var(--shadow); border-radius: var(--radius); padding: 16px; }
+.guide-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 14px; }
+.guide-row { display: flex; gap: 12px; align-items: flex-start; }
+.guide-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; margin-top: 7px; background: var(--line); }
+.guide-row.b3 .guide-dot { background: var(--accent); }
+.guide-row.b2 .guide-dot { background: #d9a441; }
+.guide-row.b1 .guide-dot { background: color-mix(in srgb, var(--muted) 55%, transparent); }
+.guide-name { font-weight: 650; letter-spacing: -.01em; }
+.guide-what { font-weight: 400; color: var(--muted); }
+.guide-then { font-size: .9rem; line-height: 1.45; margin-top: 1px; }
+.guide-note { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: .85rem; line-height: 1.5; color: var(--muted); }
+.guide-details > summary { list-style: none; cursor: pointer; padding: 2px 4px; color: var(--accent); font-weight: 600; font-size: .9rem; }
+.guide-details > summary::-webkit-details-marker { display: none; }
+.guide-details > summary::after { content: ' ›'; }
+.guide-details[open] > summary { margin-bottom: 8px; }
+.guide-details[open] > summary::after { content: ' ⌄'; }
+.title-note { display: block; margin-top: 1px; font-size: .82rem; font-weight: 400; letter-spacing: 0; color: var(--muted); }
+
+/* Account rows: the status tag sits in the header corner so the opened form gets full width */
+.list > li.row:has(.acct-head) { position: relative; display: block; }
+.list > li.row:has(.acct-head) > .pill { position: absolute; top: 16px; right: 16px; }
+.list > li.row:has(.acct-head) .acct-head { padding-right: 104px; grid-template-columns: minmax(0, 1fr); }
+.list > li.row:has(.acct-head) .acct-chevron { display: none; }
+.guide-what::before { content: '— '; }
+.about-you { background: var(--surface); border: 1px solid var(--card-border); box-shadow: var(--shadow); border-radius: var(--radius); padding: 18px 16px; }

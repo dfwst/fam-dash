@@ -5,6 +5,8 @@ import { callFn } from '../lib/functions';
 import { Link, useSearchParams } from 'react-router-dom';
 import { loadAccounts, type Account } from '../lib/accounts';
 import Activity from './Activity';
+import SortingGuide from './SortingGuide';
+import { BUCKET_LABEL, relabel } from '../lib/buckets';
 
 // Review = training rlyfe's sorting. Work through "To check" by confirming or correcting
 // each thread; checked ones move under Real / Glance / Junk. Nothing here changes mail.
@@ -50,7 +52,6 @@ function groupQueue(ts: Thread[]): Group[] {
 }
 type GroupUndo = { key: string; isDomain: boolean; ids: { account_id: string; thread_id: string }[]; text: string };
 
-const BUCKET_LABEL = { 1: 'Junk', 2: 'Glance', 3: 'Real' } as const;
 const money = (n: number) => (n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`);
 const ago = (iso: string) => {
   const m = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
@@ -298,13 +299,18 @@ export default function Review() {
           </header>
 
           <div className="chips">
-            {([['To check', 'check'], ['Real', 3], ['Glance', 2], ['Junk', 1]] as const)
+            {([['To check', 'check'], [BUCKET_LABEL[3], 3], [BUCKET_LABEL[2], 2], [BUCKET_LABEL[1], 1]] as const)
               .map(([label, f]) => (
                 <button key={label} className={filter === f ? 'chip active' : 'chip'} onClick={() => { setFilter(f); setLearnedMsg(''); }}>
                   {label} <span className="tab-count">{counts[f]}</span>
                 </button>
               ))}
           </div>
+
+          <details className="guide-details">
+            <summary>What do {BUCKET_LABEL[3]}, {BUCKET_LABEL[2]} and {BUCKET_LABEL[1]} mean?</summary>
+            <SortingGuide />
+          </details>
 
           {learnedMsg && <p className="notice" onClick={() => setLearnedMsg('')}>{learnedMsg}</p>}
           {groupUndo && (
@@ -345,7 +351,7 @@ export default function Review() {
                       </div>
                       <div className="review-sub">{names}</div>
                       <div className="review-why">
-                        rlyfe sorted {[n1 && `${n1} as Junk`, n2 && `${n2} as Glance`].filter(Boolean).join(', ')}
+                        rlyfe sorted {[n1 && `${n1} as ${BUCKET_LABEL[1]}`, n2 && `${n2} as ${BUCKET_LABEL[2]}`].filter(Boolean).join(', ')}
                         {g.isDomain ? '. One tap sorts them all, and future mail from here.' : '. One tap sorts them all.'}
                       </div>
                       {seg(major, 'sorted', b => groupPick(g, b), false, `Sort all of ${g.key}`)}
@@ -404,8 +410,8 @@ export default function Review() {
             <h2 className="today-hello">{running ? 'Syncing…' : lastSync ? `Synced ${ago(lastSync)}` : 'Not synced yet'}</h2>
             <p className="today-sum">
               {cleaning === 0
-                ? `Cleanup is off, so syncing never changes your mail. ${counts.archive} of ${counts.all} inbox emails would be archived if it were on.`
-                : `Cleanup is on for ${cleaning} account${cleaning === 1 ? '' : 's'}. The next sync will archive ${counts.willArchive} Junk and Glance email${counts.willArchive === 1 ? '' : 's'}. Real mail always stays.`}
+                ? `Morning cleanup is off, so syncing never changes your mail. ${counts.archive} of ${counts.all} inbox emails would be cleared if it were on.`
+                : `Cleanup is on for ${cleaning} account${cleaning === 1 ? '' : 's'}. The next sync will clear ${counts.willArchive} ${BUCKET_LABEL[1]} and ${BUCKET_LABEL[2]} email${counts.willArchive === 1 ? '' : 's'} out of the inbox (archived, never deleted). ${BUCKET_LABEL[3]} mail always stays.`}
             </p>
           </header>
           <button className="primary sync-btn" disabled={syncing || running} onClick={syncNow}>
@@ -450,7 +456,7 @@ export default function Review() {
         <div className="review-sub">{t.subject}</div>
         {t.summary && !nested && <div className="review-text">{t.summary}</div>}
         <div className="review-why">
-          {b ? `Sorted ${BUCKET_LABEL[b]}` : 'Sorted'}{t.reason ? `: ${t.reason}` : ''}
+          {b ? `Sorted ${BUCKET_LABEL[b]}` : 'Sorted'}{t.reason ? `: ${relabel(t.reason)}` : ''}
           {t.last_from_me ? ' · you replied last' : ''}
           {acct ? ` · ${acct.nickname || acct.email.split('@')[0]}` : ''}
         </div>

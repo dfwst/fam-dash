@@ -117,7 +117,7 @@ export default function Rules() {
                   r.description ? `about: ${r.description}` : ''].filter(Boolean).join(' · ')}
               </div>
               <div className="muted small">
-                {r.share_matches ? 'Shared with the household' : 'Only your mail'}{r.always_real ? ' · always Real' : ''}
+                {r.share_matches ? 'Shared with the household' : 'Only your mail'}{r.always_real ? ' · always Important' : ''}
                 {r.gmail_label ? ` · Gmail label “${r.gmail_label}”` : ''}
               </div>
               <div className="row-buttons">
@@ -168,7 +168,7 @@ export default function Rules() {
           </label>
           <label className="check-row">
             <input type="checkbox" checked={draft.always_real} onChange={e => set({ always_real: e.target.checked })} />
-            <span>Always Real <span className="muted small">— never sorted as junk or archived</span></span>
+            <span>Always Important <span className="muted small">— stays in the inbox and on the Mail list; never cleared as Glance or Noise</span></span>
           </label>
           <label className="field"><span className="muted small">Gmail label (optional — also labels matches in Gmail)</span>
             <input value={draft.gmail_label} maxLength={40} onChange={e => set({ gmail_label: e.target.value })} placeholder="Karen" /></label>

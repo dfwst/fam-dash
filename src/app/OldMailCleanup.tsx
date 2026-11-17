@@ -82,7 +82,7 @@ export default function OldMailCleanup({ accountId, email }: { accountId: string
     <div className="cleanup">
       <p className="muted small">
         Archives old inbox mail in one go. Keeps anything you <strong>starred</strong>, mail from <strong>people you’ve
-        written to</strong>, and senders you’ve marked <strong>Real</strong>. Nothing is deleted.
+        written to</strong>, and senders you’ve marked <strong>Important</strong>. Nothing is deleted.
       </p>
 
       {last && last.status !== 'undone' && (

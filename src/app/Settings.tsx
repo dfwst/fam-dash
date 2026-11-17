@@ -10,6 +10,8 @@ import AccountPurpose from './AccountPurpose';
 import AboutYou from './AboutYou';
 import Household from './Household';
 import Rules from './Rules';
+import SortingGuide from './SortingGuide';
+import { ARCHIVE_NOTE, BUCKET_LABEL } from '../lib/buckets';
 
 const ERRORS: Record<string, string> = {
   access_denied: 'Google sign-in was cancelled.',
@@ -23,10 +25,11 @@ const ERRORS: Record<string, string> = {
 };
 
 // What the MORNING SYNC may do on its own. Your own taps (Done, Ignore…) work on every account.
+// Each choice says exactly what moves and what stays — no guessing.
 const POLICY: Record<Account['policy'], { label: string; help: string }> = {
-  read_only: { label: 'Off (read only)', help: 'The morning sync never changes this mailbox.' },
-  junk_only: { label: 'Junk only', help: 'Archives + marks read Junk. Glance and Real stay in the inbox.' },
-  full: { label: 'Junk + Glance', help: 'Archives + marks read Junk and Glance. Real always stays in the inbox.' },
+  read_only: { label: 'Off', help: 'rlyfe only sorts what you see here. Nothing in this inbox moves.' },
+  junk_only: { label: `Clear ${BUCKET_LABEL[1]}`, help: `Each morning, ${BUCKET_LABEL[1]} leaves this inbox. ${BUCKET_LABEL[2]} and ${BUCKET_LABEL[3]} stay.` },
+  full: { label: `Clear ${BUCKET_LABEL[1]} and ${BUCKET_LABEL[2]}`, help: `Each morning, ${BUCKET_LABEL[1]} and ${BUCKET_LABEL[2]} leave this inbox. ${BUCKET_LABEL[3]} always stays.` },
 };
 
 // Settings is split into sections with a sub-nav; ?s= keeps your place (and the back button works)
@@ -161,9 +164,12 @@ export default function Settings() {
       {section === 'invites' && <Household />}
       {section === 'more' && (
         <div className="stack">
-          <p className="muted small">
-            rlyfe can read mail, archive, and mark as read — never delete. It never sends anything without your tap.
-            Each account starts with morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
+          <h3 className="section-title">How rlyfe sorts your mail</h3>
+          <SortingGuide />
+          <h3 className="section-title">What rlyfe can and can’t do</h3>
+          <p className="muted small hint">
+            rlyfe can read mail, archive it, and mark it read — it never deletes, and never sends anything without your tap.
+            Every account starts with Morning cleanup off. Work Microsoft accounts may need your IT department to approve rlyfe.
           </p>
           <GmailOpenTest />
           <button className="signout" onClick={() => supabase.auth.signOut()}>Sign out</button>
@@ -204,42 +210,54 @@ export default function Settings() {
                 {!a.ai_context && a.owner_id === myId && (
                   <AccountPurpose account={a} onSaved={ai_context => setAccounts(l => l?.map(x => (x.id === a.id ? { ...x, ai_context } : x)) ?? null)} />
                 )}
-                {openAcct === a.id && <>
-                <NicknameField account={a} onSave={n => setNickname(a, n)} />
-                <label className="policy">
-                  <span className="muted small">Shows on tab</span>
-                  <select value={a.default_tab_id ?? ''} onChange={e => setTab(a, e.target.value)}>
-                    {!a.default_tab_id && <option value="">— none —</option>}
-                    {/* a shared account can only show on a tab everyone sees */}
-                    {tabs.filter(t => !a.shared || !t.owner_id || t.id === a.default_tab_id).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                  </select>
-                </label>
-                <label className="policy">
-                  <span className="muted small">Morning cleanup</span>
-                  <select value={a.policy} onChange={e => setPolicy(a, e.target.value as Account['policy'])}>
+                {openAcct === a.id && <div className="acct-form">
+                  <NicknameField account={a} onSave={n => setNickname(a, n)} />
+                  <label className="field">
+                    <span className="field-label">Shows on tab</span>
+                    <select value={a.default_tab_id ?? ''} onChange={e => setTab(a, e.target.value)}>
+                      {!a.default_tab_id && <option value="">— none —</option>}
+                      {/* a shared account can only show on a tab everyone sees */}
+                      {tabs.filter(t => !a.shared || !t.owner_id || t.id === a.default_tab_id).map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </label>
+
+                  <fieldset className="choices">
+                    <legend className="field-label">Morning cleanup</legend>
                     {(Object.keys(POLICY) as Account['policy'][]).map(p => (
-                      <option key={p} value={p}>{POLICY[p].label}</option>
+                      <label key={p} className={a.policy === p ? 'choice on' : 'choice'}>
+                        <input type="radio" name={`policy-${a.id}`} checked={a.policy === p} onChange={() => setPolicy(a, p)} />
+                        <span className="choice-text">
+                          <span className="choice-title">{POLICY[p].label}</span>
+                          <span className="choice-help">{POLICY[p].help}</span>
+                        </span>
+                      </label>
                     ))}
-                  </select>
-                </label>
-                <div className="muted small">{POLICY[a.policy].help}</div>
-                {a.provider === 'imap' && (
-                  <button className="link small remove-acct" onClick={() => setCleanupFor(c => (c === a.id ? null : a.id))}>
-                    {cleanupFor === a.id ? 'Close cleanup' : 'Clean up old mail…'}
-                  </button>
-                )}
-                {cleanupFor === a.id && <OldMailCleanup accountId={a.id} email={a.email} />}
-                <Link className="link small remove-acct" to={`/retire/${a.id}`}>Retire this address…</Link>
-                {a.owner_id === myId && (
-                  <>
-                    <label className="check-line small">
-                      <input type="checkbox" checked={a.shared} onChange={e => setShared(a, e.target.checked)} />
-                      Shared with household
+                    <p className="field-help">{ARCHIVE_NOTE}</p>
+                  </fieldset>
+
+                  {a.owner_id === myId && (
+                    <label className="switch-row">
+                      <span className="choice-text">
+                        <span className="choice-title">Shared with household</span>
+                        <span className="choice-help">Everyone in your household sees this account’s mail.</span>
+                      </span>
+                      <input type="checkbox" className="switch" checked={a.shared} onChange={e => setShared(a, e.target.checked)} />
                     </label>
-                    <button className="link danger small remove-acct" disabled={busy} onClick={() => remove(a)}>Remove account</button>
-                  </>
-                )}
-                </>}
+                  )}
+
+                  <div className="acct-links">
+                    {a.provider === 'imap' && (
+                      <button className="acct-link" onClick={() => setCleanupFor(c => (c === a.id ? null : a.id))}>
+                        <span>{cleanupFor === a.id ? 'Close cleanup' : 'Clean up old mail'}</span><span className="chev" aria-hidden>›</span>
+                      </button>
+                    )}
+                    {cleanupFor === a.id && <OldMailCleanup accountId={a.id} email={a.email} />}
+                    <Link className="acct-link" to={`/retire/${a.id}`}><span>Retire this address</span><span className="chev" aria-hidden>›</span></Link>
+                    {a.owner_id === myId && (
+                      <button className="acct-link danger" disabled={busy} onClick={() => remove(a)}><span>Remove account</span></button>
+                    )}
+                  </div>
+                </div>}
               </div>
               {a.status === 'needs_reconnect' ? (
                 <button className="pill warn" disabled={busy} onClick={() => (a.provider === 'imap' ? setImapFor(a.email) : connect(a.provider, a.email))}>Reconnect</button>
@@ -290,12 +308,12 @@ function NicknameField({ account, onSave }: { account: Account; onSave: (n: stri
   };
 
   return (
-    <label className="policy">
-      <span className="muted small">Label on emails</span>
+    <label className="field">
+      <span className="field-label">Label on emails <span className="nick-state" aria-live="polite">{saved ? 'Saved ✓' : ''}</span></span>
       <input value={value} maxLength={24} placeholder={account.email.split('@')[0]}
              onChange={e => setValue(e.target.value)} onBlur={commit}
              onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />
-      <span className="muted small nick-state" aria-live="polite">{saved ? 'Saved ✓' : ''}</span>
+      <span className="field-help">A short name shown on each email so you can tell which account it came from.</span>
     </label>
   );
 }

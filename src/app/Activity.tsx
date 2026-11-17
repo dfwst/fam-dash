@@ -1,3 +1,4 @@
+import { relabel } from '../lib/buckets';
 import { useCallback, useEffect, useState } from 'react';
 import { threadPath } from '../lib/todos';
 import { supabase } from '../lib/supabase';
@@ -78,7 +79,7 @@ export default function Activity({ accounts }: { accounts: Map<string, Account> 
                       ? <Link className="ellipsis row-link" to={threadPath(e.account_id, e.thread_id!)}>{title}</Link>
                       : <div className="ellipsis">{title}</div>}
                     <div className="muted small ellipsis">
-                      {e.payload.from_name ? `${e.payload.from_name} · ` : ''}{e.reason}
+                      {e.payload.from_name ? `${e.payload.from_name} · ` : ''}{relabel(e.reason)}
                       {e.source === 'sync' ? ' · morning sync' : ''}
                     </div>
                   </div>

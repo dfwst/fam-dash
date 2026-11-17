@@ -230,7 +230,7 @@ export default function TabPage({ tab }: { tab: Tab }) {
 
       {glance.length > 0 && (
         <section className="stack">
-          <h3 className="section-title">Worth a glance</h3>
+          <h3 className="section-title">Worth a glance <span className="title-note">Good to know, nothing to do. Clears itself after a week.</span></h3>
           <ul className="glance">
             {glanceShown.map(t => (
               <GlanceRow key={key(t)} t={t} canAct={byId.has(t.account_id)}
